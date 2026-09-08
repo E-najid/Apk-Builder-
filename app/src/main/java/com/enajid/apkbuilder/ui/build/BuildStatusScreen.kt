@@ -137,6 +137,7 @@ fun BuildStatusScreen(
                         Phase.PUSHING, Phase.WAITING, Phase.RUNNING -> BuildProgressCard(state)
                         Phase.SUCCESS -> ApkReadyCard(
                             state = state,
+                            onRetry = { viewModel.start() },
                             onDownload = {
                                 val needsLegacyPermission = Build.VERSION.SDK_INT < Build.VERSION_CODES.Q
                                 val granted = ContextCompat.checkSelfPermission(

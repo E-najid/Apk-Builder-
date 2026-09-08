@@ -65,5 +65,6 @@ class ProjectsRepository(private val api: GitHubApi) {
         const val MARKER_TOPIC = "apk-builder"
         private const val PAGE_SIZE = 100
         private const val MAX_PAGES = 5
+        private const val NAME_ATTEMPTS = 5
     }
 }

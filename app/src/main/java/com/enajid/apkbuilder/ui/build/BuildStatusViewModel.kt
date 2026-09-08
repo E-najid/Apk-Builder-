@@ -139,7 +139,7 @@ class BuildStatusViewModel(
                     }
                     if (fresh.status == "completed") {
                         if (fresh.conclusion == "success") {
-                            val artifacts = actions.getArtifacts(owner, repo, run.id).artifacts
+                            val artifacts = actions.getArtifacts(owner, repo, run.id)
                             val artifact = artifacts.firstOrNull { !it.expired } ?: artifacts.firstOrNull()
                             _state.update {
                                 it.copy(
