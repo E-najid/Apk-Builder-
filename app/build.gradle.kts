@@ -1,4 +1,3 @@
-import java.util.Locale
 
 plugins {
     alias(libs.plugins.android.application)
