@@ -29,10 +29,13 @@ class ProjectsRepository(private val api: GitHubApi) {
     }
 
     /**
-     * Creates a fresh public repo. If the name is already taken on the account,
-     * retries with "-2", "-3", … suffixes before giving up.
+     * Creates a fresh public repo. If the name is already taken on the
+     * account, first checks whether it's an *empty* repo left behind by a
+     * previous failed attempt — if so, reuses it instead of piling up
+     * "name-2", "name-3"… duplicates. Only then falls back to a suffixed name.
      */
     suspend fun createProjectRepo(baseName: String, description: String?): GithubRepo {
+        val login = api.currentUser().login
         var candidate = baseName
         var lastError: HttpException? = null
         for (attempt in 0 until NAME_ATTEMPTS) {
@@ -47,11 +50,14 @@ class ProjectsRepository(private val api: GitHubApi) {
                 )
             } catch (e: HttpException) {
                 lastError = e
-                if (e.code() == 422 && attempt < NAME_ATTEMPTS - 1) {
-                    candidate = "$baseName-${attempt + 2}"
-                } else {
-                    throw e
+                if (e.code() != 422) throw e
+                val existing = runCatching { api.getRepo(login, candidate) }.getOrNull()
+                if (existing != null && existing.pushed_at.isNullOrBlank()) {
+                    // Same-name repo exists but nothing was ever pushed to it —
+                    // almost certainly an earlier attempt that failed midway.
+                    return existing
                 }
+                candidate = "$baseName-${attempt + 2}"
             }
         }
         throw lastError ?: IllegalStateException("Could not create the repository")

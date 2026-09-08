@@ -72,6 +72,41 @@ jobs:
           } > comment.md
           head -c 60000 comment.md > comment-final.md
           gh pr comment "$PR_NUMBER" --body-file comment-final.md
+      - name: Verify template assets are packaged in the APK
+        run: |
+          APK=$(ls app/build/outputs/apk/debug/*.apk | head -n 1)
+          echo "Checking template assets in $APK"
+          unzip -l "$APK" | awk 'NR>3 {print $4}' > /tmp/apk-entries.txt
+          MISSING=0
+          while IFS= read -r f; do
+            if ! grep -qx "assets/$f" /tmp/apk-entries.txt; then
+              echo "::error::Template asset missing from the APK: $f"
+              MISSING=1
+            fi
+          done <<'EOF'
+          templates/kotlin-app/_github/workflows/build.yml
+          templates/kotlin-app/_gitignore
+          templates/kotlin-app/README.md
+          templates/kotlin-app/settings.gradle.kts
+          templates/kotlin-app/build.gradle.kts
+          templates/kotlin-app/gradle.properties
+          templates/kotlin-app/gradlew
+          templates/kotlin-app/gradlew.bat
+          templates/kotlin-app/gradle/wrapper/gradle-wrapper.jar
+          templates/kotlin-app/gradle/wrapper/gradle-wrapper.properties
+          templates/kotlin-app/app/build.gradle.kts
+          templates/kotlin-app/app/proguard-rules.pro
+          templates/kotlin-app/app/src/main/AndroidManifest.xml
+          templates/kotlin-app/app/src/main/java/MainActivity.kt
+          templates/kotlin-app/app/src/main/res/drawable/ic_launcher.xml
+          templates/kotlin-app/app/src/main/res/values/strings.xml
+          templates/kotlin-app/app/src/main/res/values/themes.xml
+          EOF
+          if [ "$MISSING" = "0" ]; then
+            echo "All 17 template assets are present in the APK ✓"
+          else
+            exit 1
+          fi
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:

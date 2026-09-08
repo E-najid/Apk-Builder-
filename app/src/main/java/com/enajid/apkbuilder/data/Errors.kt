@@ -34,6 +34,7 @@ fun Throwable.friendlyMessage(): String = when (this) {
             else -> parsed?.message?.takeIf { it.isNotBlank() } ?: "GitHub error (HTTP ${code()})."
         }
     }
-    is IOException -> "Network trouble — check your internet connection and try again."
+    is IOException -> "Couldn't reach GitHub — the connection dropped. This is usually " +
+        "temporary: check your internet (or switch between Wi-Fi and mobile data) and try again."
     else -> message ?: "Something went wrong."
 }

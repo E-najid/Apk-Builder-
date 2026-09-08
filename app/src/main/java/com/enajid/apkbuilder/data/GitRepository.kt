@@ -28,6 +28,12 @@ class GitRepository(private val api: GitHubApi) {
 
         val headSha = headShaOf(owner, repo, branch)
 
+        // A brand-new repo has no base tree yet, so deletions are meaningless
+        // there — and GitHub rejects null-sha entries without a base tree.
+        // (This matters when the user picks a custom icon: the renderer asks
+        // to delete the default vector drawable, which doesn't exist yet.)
+        val effectiveDeletions = if (headSha == null) emptyList() else deletions
+
         val entries = files.map { file ->
             val blob = api.createBlob(
                 owner, repo,
@@ -42,7 +48,7 @@ class GitRepository(private val api: GitHubApi) {
                 type = "blob",
                 sha = blob.sha,
             )
-        } + deletions.map { path ->
+        } + effectiveDeletions.map { path ->
             // A null sha in a tree with a base_tree deletes the file.
             TreeEntryInput(path = path, mode = "100644", type = "blob", sha = null)
         }

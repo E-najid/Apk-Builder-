@@ -1,11 +1,14 @@
 package com.enajid.apkbuilder.data
 
 import android.content.Context
+import android.os.SystemClock
 import kotlinx.serialization.json.Json
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
+import okhttp3.Response
 import retrofit2.Retrofit
 import retrofit2.converter.kotlinx.serialization.asConverterFactory
+import java.io.IOException
 import java.util.concurrent.TimeUnit
 
 /**
@@ -24,9 +27,11 @@ class AppContainer(context: Context) {
     }
 
     private val okHttpClient = OkHttpClient.Builder()
-        .connectTimeout(20, TimeUnit.SECONDS)
+        .connectTimeout(30, TimeUnit.SECONDS)
         .readTimeout(60, TimeUnit.SECONDS)
         .writeTimeout(60, TimeUnit.SECONDS)
+        .callTimeout(120, TimeUnit.SECONDS)
+        .addInterceptor(RetryInterceptor())
         .addInterceptor { chain ->
             val builder = chain.request().newBuilder()
                 .header("Accept", "application/vnd.github+json")
@@ -49,4 +54,35 @@ class AppContainer(context: Context) {
     val actionsRepository = ActionsRepository(gitHubApi)
     val projectCreator = ProjectCreator(projectsRepository, gitRepository, templateEngine)
     val buildOrchestrator = BuildOrchestrator(gitRepository, actionsRepository, localProjectStore)
+
+    /**
+     * Retries a request a couple of times when the connection itself fails
+     * (timeouts, connection resets, DNS hiccups — common on mobile networks).
+     *
+     * Every GitHub endpoint this app calls is safe to re-issue: repo-creation
+     * name collisions are handled by reusing the existing empty repo (see
+     * ProjectsRepository), Git blobs/trees/commits are content-addressed and
+     * orphaned duplicates are harmless, and topic updates are idempotent.
+     */
+    private class RetryInterceptor(
+        private val maxAttempts: Int = 3,
+        private val firstBackoffMs: Long = 1_000L,
+    ) : okhttp3.Interceptor {
+
+        override fun intercept(chain: okhttp3.Interceptor.Chain): Response {
+            val request = chain.request()
+            var lastError: IOException? = null
+            for (attempt in 0 until maxAttempts) {
+                try {
+                    if (attempt > 0) {
+                        SystemClock.sleep(firstBackoffMs * attempt)
+                    }
+                    return chain.proceed(request)
+                } catch (e: IOException) {
+                    lastError = e
+                }
+            }
+            throw lastError ?: IOException("GitHub request failed after $maxAttempts attempts: ${request.url}")
+        }
+    }
 }

@@ -2,6 +2,8 @@ package com.enajid.apkbuilder.data
 
 import com.enajid.apkbuilder.domain.Framework
 import com.enajid.apkbuilder.domain.ProjectSpec
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 /**
  * Creates a new project end-to-end: repo + customized template + marker topic.
@@ -19,7 +21,7 @@ class ProjectCreator(
     suspend fun createKotlinProject(
         spec: ProjectSpec,
         onStep: (Step) -> Unit = {},
-    ): GithubRepo {
+    ): GithubRepo = withContext(Dispatchers.IO) {
         check(spec.framework == Framework.KOTLIN) { "Only Kotlin projects are supported in v1" }
 
         onStep(Step.CREATING_REPO)
@@ -44,6 +46,6 @@ class ProjectCreator(
 
         onStep(Step.FINISHING)
         projectsRepository.markAsApkBuilderRepo(owner, repo.name)
-        return repo
+        repo
     }
 }

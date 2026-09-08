@@ -134,7 +134,19 @@ class CreateProjectViewModel(application: Application) : AndroidViewModel(applic
                 } catch (e: CancellationException) {
                     throw e
                 } catch (e: Exception) {
-                    _state.update { it.copy(creating = false, error = e.friendlyMessage()) }
+                    // Say WHERE it failed so the user isn't left guessing.
+                    val where = when (_state.value.creatingStep) {
+                        ProjectCreator.Step.CREATING_REPO -> "while creating the GitHub repository"
+                        ProjectCreator.Step.UPLOADING_CODE -> "while uploading the project files"
+                        ProjectCreator.Step.FINISHING, null -> "while finishing up"
+                    }
+                    _state.update {
+                        it.copy(
+                            creating = false,
+                            error = "Failed $where: ${e.friendlyMessage()} " +
+                                "Tap “Create app” to try again — it's safe to retry.",
+                        )
+                    }
                 }
             }
         }
