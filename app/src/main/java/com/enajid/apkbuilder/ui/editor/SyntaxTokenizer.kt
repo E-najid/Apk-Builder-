@@ -39,6 +39,11 @@ object SyntaxTokenizer {
         "assert", "goto",
     )
 
+    // Which named groups each pattern actually defines. Matcher.group(name)
+    // throws for names the pattern doesn't contain, so these lists must match.
+    private val KOTLIN_GROUPS = listOf("comment", "str", "annotation", "number", "ident")
+    private val XML_GROUPS = listOf("comment", "pi", "tag", "attr", "str")
+
     // Order matters: comments and strings must win over identifiers/numbers.
     private val KOTLIN_PATTERN: Pattern = Pattern.compile(
         "(?<comment>//[^\\n]*|/\\*[\\s\\S]*?\\*/)" +
@@ -58,7 +63,7 @@ object SyntaxTokenizer {
 
     fun tokenize(code: String, language: SyntaxLanguage): List<SyntaxSpan> = when (language) {
         SyntaxLanguage.PLAIN -> emptyList()
-        SyntaxLanguage.KOTLIN -> tokenizeWith(KOTLIN_PATTERN, code) { group, value ->
+        SyntaxLanguage.KOTLIN -> tokenizeWith(KOTLIN_PATTERN, KOTLIN_GROUPS, code) { group, value ->
             when (group) {
                 "comment" -> SpanType.COMMENT
                 "str" -> SpanType.STRING
@@ -72,7 +77,7 @@ object SyntaxTokenizer {
                 else -> null
             }
         }
-        SyntaxLanguage.XML -> tokenizeWith(XML_PATTERN, code) { group, _ ->
+        SyntaxLanguage.XML -> tokenizeWith(XML_PATTERN, XML_GROUPS, code) { group, _ ->
             when (group) {
                 "comment" -> SpanType.COMMENT
                 "pi" -> SpanType.PI
@@ -86,17 +91,18 @@ object SyntaxTokenizer {
 
     private inline fun tokenizeWith(
         pattern: Pattern,
+        groupNames: List<String>,
         code: String,
         classify: (group: String, value: String) -> SpanType?,
     ): List<SyntaxSpan> {
         val spans = mutableListOf<SyntaxSpan>()
         val matcher = pattern.matcher(code)
-        val groupNames = listOf("comment", "str", "annotation", "number", "ident", "pi", "tag", "attr")
         while (matcher.find()) {
             var type: SpanType? = null
             for (name in groupNames) {
-                if (matcher.group(name) != null) {
-                    type = classify(name, matcher.group(name) ?: "")
+                val value = matcher.group(name)
+                if (value != null) {
+                    type = classify(name, value)
                     break
                 }
             }
