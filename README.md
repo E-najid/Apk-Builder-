@@ -69,6 +69,11 @@ Or build locally with Android Studio (see
 
 ## OAuth setup
 
+**End users never see any of this.** The client ID ships inside the
+distributed APK, so for them sign-in is just: tap "Continue with GitHub" →
+enter a short code → done. This section is only for the maintainer building
+the app, once.
+
 APK Builder signs in with the **GitHub OAuth Device Flow**: you're shown a
 short code, you enter it at `github.com/login/device`, and the app receives a
 token. No client secret and no redirect URI are involved, which is exactly why
@@ -91,16 +96,23 @@ two minutes):
 2. In the app's settings, enable **Device Flow**.
 3. Provide your client ID in whichever way fits:
 
-   - **CI builds (recommended for maintainers):** add a repository secret
-     named `GITHUB_CLIENT_ID` (repo → Settings → Secrets and variables →
-     Actions). The workflow bakes it into every APK it builds.
-   - **Local builds:** build with `-PGITHUB_CLIENT_ID=Iv1.xxxxxxxxxxxxxxxx`
-     or put `GITHUB_CLIENT_ID=Iv1.xxxxxxxxxxxxxxxx` into
+   - **Commit it (simplest, recommended):** uncomment `GITHUB_CLIENT_ID=` in
+     the repo's `gradle.properties` and paste your ID. Every build — CI or
+     local — then has sign-in working out of the box. Client IDs are public
+     identifiers, so committing one is safe; this is how the released APK
+     should get its ID.
+   - **CI-only via secret:** add a repository secret named
+     `GITHUB_CLIENT_ID` (repo → Settings → Secrets and variables → Actions).
+     The workflow bakes it into every APK it builds.
+   - **Local builds without touching the repo:** build with
+     `-PGITHUB_CLIENT_ID=Iv1.xxxxxxxxxxxxxxxx` or put
+     `GITHUB_CLIENT_ID=Iv1.xxxxxxxxxxxxxxxx` into
      `~/.gradle/gradle.properties`.
-   - **Any build, at runtime:** if no client ID was baked in, the sign-in
-     screen detects it and shows a one-time setup card where the user pastes
-     their own client ID. It's stored in the app's private DataStore — still
-     no server, no database.
+   - **Last-resort fallback, at runtime:** if no client ID was baked in at
+     all, the sign-in screen detects it and shows a one-time setup card where
+     the user can paste their own client ID. It's stored in the app's private
+     DataStore — still no server, no database. End users of a properly built
+     release never see this screen.
 
 Client IDs are public identifiers (they ship inside every OAuth app), so
 none of this involves a secret. Distributors of prebuilt APKs embed their own
