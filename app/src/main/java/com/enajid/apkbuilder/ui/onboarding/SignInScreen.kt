@@ -15,12 +15,15 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.ContentCopy
 import androidx.compose.material.icons.rounded.ErrorOutline
+import androidx.compose.material.icons.rounded.Key
+import androidx.compose.material.icons.rounded.OpenInNew
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -41,6 +44,8 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.enajid.apkbuilder.data.GitHubAuth
 import com.enajid.apkbuilder.ui.components.ScreenLoading
 import com.enajid.apkbuilder.util.Intents
+
+private const val NEW_OAUTH_APP_URL = "https://github.com/settings/applications/new"
 
 @Composable
 fun SignInScreen(onDone: () -> Unit, viewModel: SignInViewModel = viewModel()) {
@@ -64,6 +69,12 @@ fun SignInScreen(onDone: () -> Unit, viewModel: SignInViewModel = viewModel()) {
             when {
                 state.loading -> ScreenLoading("Contacting GitHub…")
 
+                state.needsSetup -> ClientIdSetupCard(
+                    state = state,
+                    onInputChange = viewModel::updateClientIdInput,
+                    onSave = viewModel::saveClientId,
+                )
+
                 state.error != null -> {
                     Icon(
                         imageVector = Icons.Rounded.ErrorOutline,
@@ -79,6 +90,10 @@ fun SignInScreen(onDone: () -> Unit, viewModel: SignInViewModel = viewModel()) {
                     )
                     Spacer(Modifier.height(24.dp))
                     Button(onClick = { viewModel.start() }) { Text("Retry") }
+                    Spacer(Modifier.height(4.dp))
+                    TextButton(onClick = { viewModel.showSetup() }) {
+                        Text("Use a different client ID")
+                    }
                 }
 
                 else -> {
@@ -166,5 +181,107 @@ fun SignInScreen(onDone: () -> Unit, viewModel: SignInViewModel = viewModel()) {
                 }
             }
         }
+    }
+}
+
+/**
+ * One-time setup: no usable OAuth client ID is available, so the user creates
+ * their own (free) GitHub OAuth app and pastes the client ID here. The ID is
+ * stored on the device only — this app has no server and no database.
+ */
+@Composable
+private fun ClientIdSetupCard(
+    state: SignInUiState,
+    onInputChange: (String) -> Unit,
+    onSave: () -> Unit,
+) {
+    val context = LocalContext.current
+
+    Icon(
+        imageVector = Icons.Rounded.Key,
+        contentDescription = null,
+        modifier = Modifier.size(40.dp),
+        tint = MaterialTheme.colorScheme.primary,
+    )
+    Spacer(Modifier.height(12.dp))
+    Text("One-time setup", style = MaterialTheme.typography.headlineSmall)
+    Spacer(Modifier.height(8.dp))
+    Text(
+        text = "APK Builder has no server and no database — it talks to GitHub directly " +
+            "from your phone. For that, GitHub just needs to know which app is asking. " +
+            "Create your own free OAuth app (2 minutes):",
+        style = MaterialTheme.typography.bodyMedium,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        textAlign = TextAlign.Center,
+    )
+    Spacer(Modifier.height(20.dp))
+
+    SetupStep(number = "1", text = "Tap \"Open GitHub\" below and create an OAuth App. Any name works; homepage and callback URL can be anything.")
+    SetupStep(number = "2", text = "In the new app's settings, tick \"Enable Device Flow\" and save.")
+    SetupStep(number = "3", text = "Copy the Client ID (starts with \"Iv1.\") and paste it below.")
+
+    Spacer(Modifier.height(20.dp))
+    OutlinedTextField(
+        value = state.clientIdInput,
+        onValueChange = onInputChange,
+        label = { Text("GitHub OAuth Client ID") },
+        placeholder = { Text("Iv1.xxxxxxxxxxxxxxxx") },
+        isError = state.clientIdError != null,
+        supportingText = state.clientIdError?.let { errorText -> { Text(errorText) } },
+        singleLine = true,
+        modifier = Modifier.fillMaxWidth(),
+    )
+    Spacer(Modifier.height(16.dp))
+    Button(
+        onClick = onSave,
+        enabled = state.clientIdInput.isNotBlank(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(52.dp),
+    ) {
+        Text("Save & continue")
+    }
+    Spacer(Modifier.height(10.dp))
+    OutlinedButton(
+        onClick = { Intents.openUrl(context, NEW_OAUTH_APP_URL) },
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Icon(
+            imageVector = Icons.Rounded.OpenInNew,
+            contentDescription = null,
+            modifier = Modifier.size(16.dp),
+        )
+        Spacer(Modifier.width(8.dp))
+        Text("Open GitHub")
+    }
+    Spacer(Modifier.height(12.dp))
+    Text(
+        text = "Your client ID stays on this phone. Nothing else is needed — no account " +
+            "on any other service, no database, no payment.",
+        style = MaterialTheme.typography.labelSmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        textAlign = TextAlign.Center,
+    )
+}
+
+@Composable
+private fun SetupStep(number: String, text: String) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 4.dp),
+    ) {
+        Text(
+            number,
+            style = MaterialTheme.typography.titleSmall,
+            color = MaterialTheme.colorScheme.primary,
+            fontWeight = FontWeight.Bold,
+        )
+        Spacer(Modifier.width(12.dp))
+        Text(
+            text,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
     }
 }

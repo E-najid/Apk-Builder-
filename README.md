@@ -85,20 +85,27 @@ Because the app requests only the scopes it needs:
 **If you build from source** you must register your own OAuth app (it takes
 two minutes):
 
-1. Go to <https://github.com/settings/developers> → **New OAuth App**.
-   Homepage URL / callback URL can be anything (the callback is never used).
-2. In the app settings, enable **Device Flow**.
-3. Build with your client ID:
+1. Go to <https://github.com/settings/applications/new> and create an OAuth
+   App. Any name works; Homepage URL / callback URL can be anything (the
+   callback is never used by the device flow).
+2. In the app's settings, enable **Device Flow**.
+3. Provide your client ID in whichever way fits:
 
-   ```bash
-   ./gradlew assembleDebug -PGITHUB_CLIENT_ID=Iv1.xxxxxxxxxxxxxxxx
-   ```
+   - **CI builds (recommended for maintainers):** add a repository secret
+     named `GITHUB_CLIENT_ID` (repo → Settings → Secrets and variables →
+     Actions). The workflow bakes it into every APK it builds.
+   - **Local builds:** build with `-PGITHUB_CLIENT_ID=Iv1.xxxxxxxxxxxxxxxx`
+     or put `GITHUB_CLIENT_ID=Iv1.xxxxxxxxxxxxxxxx` into
+     `~/.gradle/gradle.properties`.
+   - **Any build, at runtime:** if no client ID was baked in, the sign-in
+     screen detects it and shows a one-time setup card where the user pastes
+     their own client ID. It's stored in the app's private DataStore — still
+     no server, no database.
 
-   …or put `GITHUB_CLIENT_ID=Iv1.xxxxxxxxxxxxxxxx` into
-   `~/.gradle/gradle.properties`.
-
-Distributors of prebuilt APKs embed their own client ID; end users never need
-to care about any of this — they just see the device-code screen.
+Client IDs are public identifiers (they ship inside every OAuth app), so
+none of this involves a secret. Distributors of prebuilt APKs embed their own
+client ID; end users never need to care about any of this — they just see the
+device-code screen.
 
 ## Architecture
 

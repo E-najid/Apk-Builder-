@@ -7,6 +7,7 @@ import com.enajid.apkbuilder.ApkBuilderApp
 import com.enajid.apkbuilder.data.DeviceCodeResult
 import com.enajid.apkbuilder.data.TokenPollResult
 import com.enajid.apkbuilder.data.friendlyMessage
+import com.enajid.apkbuilder.domain.ClientIds
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -16,6 +17,10 @@ import kotlinx.coroutines.launch
 
 data class SignInUiState(
     val loading: Boolean = true,
+    /** True when no usable OAuth client ID exists and the setup card should show. */
+    val needsSetup: Boolean = false,
+    val clientIdInput: String = "",
+    val clientIdError: String? = null,
     val userCode: String? = null,
     val verificationUri: String? = null,
     val waiting: Boolean = false,
@@ -39,10 +44,14 @@ class SignInViewModel(application: Application) : AndroidViewModel(application) 
             try {
                 _state.value = SignInUiState(loading = true)
                 when (val result = authRepository.requestDeviceCode()) {
+                    DeviceCodeResult.NeedsSetup -> _state.update {
+                        it.copy(loading = false, needsSetup = true)
+                    }
                     is DeviceCodeResult.Success -> {
                         _state.update {
                             it.copy(
                                 loading = false,
+                                needsSetup = false,
                                 userCode = result.userCode,
                                 verificationUri = result.verificationUri,
                                 waiting = true,
@@ -65,6 +74,39 @@ class SignInViewModel(application: Application) : AndroidViewModel(application) 
                 _state.update { it.copy(loading = false, error = e.friendlyMessage()) }
             }
         }
+    }
+
+    fun updateClientIdInput(value: String) {
+        _state.update { it.copy(clientIdInput = value, clientIdError = null) }
+    }
+
+    /** Saves the client ID typed in the setup card and retries the device flow. */
+    fun saveClientId() {
+        val normalized = ClientIds.normalize(_state.value.clientIdInput)
+        if (normalized == null) {
+            _state.update {
+                it.copy(
+                    clientIdError = "That doesn't look like a client ID. Copy it from your " +
+                        "OAuth app's settings page — it usually starts with \"Iv1.\"."
+                )
+            }
+            return
+        }
+        viewModelScope.launch {
+            try {
+                authRepository.saveClientId(normalized)
+                start()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                _state.update { it.copy(loading = false, error = e.friendlyMessage()) }
+            }
+        }
+    }
+
+    /** Lets the user jump from an error state back to the setup card. */
+    fun showSetup() {
+        _state.update { it.copy(loading = false, error = null, needsSetup = true) }
     }
 
     private suspend fun pollForApproval(deviceCode: String, intervalMs: Long, expiresInMillis: Long) {

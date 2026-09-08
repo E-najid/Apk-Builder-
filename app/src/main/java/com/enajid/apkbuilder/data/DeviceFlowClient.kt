@@ -1,5 +1,6 @@
 package com.enajid.apkbuilder.data
 
+import com.enajid.apkbuilder.domain.ClientIds
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -22,6 +23,9 @@ sealed interface DeviceCodeResult {
     ) : DeviceCodeResult
 
     data class Error(val message: String) : DeviceCodeResult
+
+    /** No usable OAuth client ID is configured — the app should show its setup screen. */
+    data object NeedsSetup : DeviceCodeResult
 }
 
 sealed interface TokenPollResult {
@@ -119,17 +123,32 @@ class DeviceFlowClient(
             }
         }
 
+    /**
+     * Turns a failed device-code response into something a human can act on.
+     * The most common case by far is HTTP 404 "Not Found", which is what
+     * GitHub returns for an unknown/placeholder client ID.
+     */
     private fun errorFrom(code: Int, body: String, clientId: String): String {
         val obj = runCatching { Json.parseToJsonElement(body).jsonObject }.getOrNull()
         val described = obj?.get("error_description")?.jsonPrimitive?.contentOrNull
             ?: obj?.get("message")?.jsonPrimitive?.contentOrNull
             ?: obj?.get("error")?.jsonPrimitive?.contentOrNull
+        val errorKey = obj?.get("error")?.jsonPrimitive?.contentOrNull.orEmpty()
         return when {
+            errorKey.contains("device_flow", ignoreCase = true) ||
+                described?.contains("device flow", ignoreCase = true) == true ->
+                "Device Flow isn't enabled for this OAuth app. Open its settings on " +
+                    "GitHub and tick \"Enable Device Flow\"."
+
+            code == 404 || code == 401 ->
+                "GitHub doesn't recognize the OAuth client ID this app is using (HTTP $code). " +
+                    "Double-check the client ID — or use the button below to enter a different one."
+
+            clientId.startsWith(ClientIds.PLACEHOLDER_PREFIX) ->
+                "This build of APK Builder has no GitHub OAuth client ID set up yet. " +
+                    "Setting one up is free and takes about two minutes — see below."
+
             described != null -> described
-            code == 404 || code == 401 || clientId.startsWith("REPLACE_WITH") ->
-                "This build of APK Builder has no valid GitHub OAuth client ID. " +
-                    "If you're building from source, register your own OAuth app and set " +
-                    "GITHUB_CLIENT_ID (see the README)."
             else -> "GitHub returned HTTP $code."
         }
     }
