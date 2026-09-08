@@ -7,10 +7,13 @@ import com.enajid.apkbuilder.domain.ProjectSpec
  * Pure (Android-free) rendering of the Kotlin project template.
  *
  * Template files live in the APK's assets under `templates/kotlin-app/`.
- * Two asset names differ from their output names because some build tooling
- * ignores dotfiles inside assets:
- *   - `_github/workflows/build.yml` -> `.github/workflows/build.yml`
- *   - `_gitignore`                  -> `.gitignore`
+ * Two asset names differ from their output names because aapt's default
+ * asset-merge ignore pattern silently DROPS dot-prefixed files AND
+ * underscore-prefixed directories from the APK:
+ *   - `dot-github/workflows/build.yml` -> `.github/workflows/build.yml`
+ *   - `dot-gitignore`                  -> `.gitignore`
+ * (This is not theoretical: the underscore form shipped once and made every
+ * project creation fail with a bogus "network trouble" error.)
  *
  * The renderer substitutes `{{PLACEHOLDER}}` tokens and applies the right
  * escaping per destination (Kotlin string literal vs. XML text).
@@ -42,8 +45,8 @@ object TemplateRenderer {
     )
 
     private val entries = listOf(
-        Entry("_github/workflows/build.yml", ".github/workflows/build.yml"),
-        Entry("_gitignore", ".gitignore"),
+        Entry("dot-github/workflows/build.yml", ".github/workflows/build.yml"),
+        Entry("dot-gitignore", ".gitignore"),
         Entry("README.md", "README.md"),
         Entry("settings.gradle.kts", "settings.gradle.kts"),
         Entry("build.gradle.kts", "build.gradle.kts"),

@@ -84,8 +84,8 @@ jobs:
               MISSING=1
             fi
           done <<'EOF'
-          templates/kotlin-app/_github/workflows/build.yml
-          templates/kotlin-app/_gitignore
+          templates/kotlin-app/dot-github/workflows/build.yml
+          templates/kotlin-app/dot-gitignore
           templates/kotlin-app/README.md
           templates/kotlin-app/settings.gradle.kts
           templates/kotlin-app/build.gradle.kts

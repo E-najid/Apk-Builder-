@@ -12,8 +12,8 @@ class TemplateRendererTest {
         fun s(value: String) = value.toByteArray(Charsets.UTF_8)
         val root = TemplateRenderer.TEMPLATE_ROOT
         return mapOf(
-            "$root/_github/workflows/build.yml" to s("name: Build APK\n"),
-            "$root/_gitignore" to s("/build\n"),
+            "$root/dot-github/workflows/build.yml" to s("name: Build APK\n"),
+            "$root/dot-gitignore" to s("/build\n"),
             "$root/README.md" to s("# {{APP_NAME}}\n"),
             "$root/settings.gradle.kts" to s("rootProject.name = \"{{APP_NAME_KOTLIN}}\"\ninclude(\":app\")\n"),
             "$root/build.gradle.kts" to s("plugins { /* versions */ }\n"),
