@@ -19,10 +19,15 @@ class ClientIdsTest {
         assertNull(ClientIds.normalize(""))
         assertNull(ClientIds.normalize("   "))
         assertNull(ClientIds.normalize("short"))
-        assertNull(ClientIds.normalize("has spaces inside that are clearly wrong"))
         assertNull(ClientIds.normalize("contains/slashes"))
         assertNull(ClientIds.normalize("REPLACE_WITH_YOUR_OAUTH_APP_CLIENT_ID"))
         assertNull(ClientIds.normalize("a".repeat(101)))
+    }
+
+    @Test
+    fun `internal spaces are joined when cleaning a paste`() {
+        // A paste with a stray line-wrap in the middle should still work.
+        assertEquals("Iv1.abcdef1234", ClientIds.normalize("Iv1.abcdef 1234"))
     }
 
     @Test

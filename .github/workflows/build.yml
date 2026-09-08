@@ -22,7 +22,7 @@ jobs:
           distribution: 'temurin'
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
-      - name: Build APK
+      - name: Build APK & run unit tests
         env:
           # Optional: set this repo secret to your GitHub OAuth app's client ID
           # and every CI-built APK will have sign-in working out of the box.
@@ -31,15 +31,11 @@ jobs:
           set -o pipefail
           if [ -n "$GITHUB_CLIENT_ID" ]; then
             echo "Building with the GITHUB_CLIENT_ID repo secret baked in"
-            ./gradlew assembleDebug -PGITHUB_CLIENT_ID="$GITHUB_CLIENT_ID" 2>&1 | tee build-output.log
+            ./gradlew assembleDebug testDebugUnitTest -PGITHUB_CLIENT_ID="$GITHUB_CLIENT_ID" 2>&1 | tee build-output.log
           else
             echo "No GITHUB_CLIENT_ID secret set - building without one (the app shows its one-time setup screen)"
-            ./gradlew assembleDebug 2>&1 | tee build-output.log
+            ./gradlew assembleDebug testDebugUnitTest 2>&1 | tee build-output.log
           fi
-      - name: Run unit tests
-        run: |
-          set -o pipefail
-          ./gradlew testDebugUnitTest 2>&1 | tee test-output.log
       - name: Surface errors as annotations
         if: failure()
         run: |
