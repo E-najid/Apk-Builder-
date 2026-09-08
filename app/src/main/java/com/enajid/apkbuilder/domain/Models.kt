@@ -1,0 +1,33 @@
+package com.enajid.apkbuilder.domain
+
+/** Frameworks users can pick when creating a project. Only Kotlin works in v1. */
+enum class Framework(val label: String, val available: Boolean, val blurb: String) {
+    KOTLIN("Kotlin", true, "Modern Android app with Jetpack Compose"),
+    JAVA("Java", false, "Classic Android app in Java"),
+    FLUTTER("Flutter", false, "Cross-platform app with the Flutter SDK"),
+    REACT_NATIVE("React Native", false, "Cross-platform app with React"),
+}
+
+/** Everything needed to render a fresh Kotlin project from the template. */
+data class ProjectSpec(
+    val appName: String,
+    val packageName: String,
+    val minSdk: Int,
+    val targetSdk: Int,
+    val framework: Framework = Framework.KOTLIN,
+    val iconPng: ByteArray? = null,
+    val compileSdk: Int = 34,
+)
+
+/**
+ * Extra toolchains detected in a project. v1 only uses this to show a "this
+ * may take longer" note; v2 will also inject the matching workflow steps
+ * (see WorkflowGenerator in the README).
+ */
+enum class Toolchain(val slowsBuildDown: Boolean, val label: String) {
+    RUST(true, "Rust"),
+    NDK(true, "native C/C++"),
+    PYTHON(false, "Python"),
+    FLUTTER(false, "Flutter"),
+    REACT_NATIVE(false, "React Native"),
+}
