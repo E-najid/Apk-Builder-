@@ -31,6 +31,7 @@ import androidx.compose.material.icons.rounded.Error
 import androidx.compose.material.icons.rounded.OpenInNew
 import androidx.compose.material.icons.rounded.Remove
 import androidx.compose.material.icons.rounded.Share
+import androidx.compose.material.icons.rounded.SmartToy
 import androidx.compose.material.icons.rounded.Warning
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -82,6 +83,7 @@ fun BuildStatusScreen(
     repo: String,
     onBack: () -> Unit,
     onEditCode: () -> Unit,
+    onFixWithAi: (String) -> Unit = {},
     viewModel: BuildStatusViewModel = viewModel(),
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
@@ -160,6 +162,7 @@ fun BuildStatusScreen(
                             state = state,
                             onRetry = { viewModel.start() },
                             onEditCode = onEditCode,
+                            onFixWithAi = onFixWithAi,
                         )
                         Phase.ERROR -> Unit
                     }
@@ -519,6 +522,7 @@ private fun BuildFailedCard(
     state: BuildStatusViewModel.BuildUiState,
     onRetry: () -> Unit,
     onEditCode: () -> Unit,
+    onFixWithAi: (String) -> Unit,
 ) {
     val context = LocalContext.current
     Card(Modifier.fillMaxWidth()) {
@@ -563,6 +567,28 @@ private fun BuildFailedCard(
             }
 
             Spacer(Modifier.height(16.dp))
+            Button(
+                onClick = {
+                    onFixWithAi(
+                        buildString {
+                            append("The last GitHub Actions build failed")
+                            state.failureHeading?.let { append(": "); append(it) }
+                            append(".\n")
+                            state.failureLines.take(30).forEach { appendLine(it) }
+                            append(
+                                "\nRead the relevant files first, find the cause, then fix the code " +
+                                    "so it builds."
+                            )
+                        }
+                    )
+                },
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Icon(Icons.Rounded.SmartToy, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.width(8.dp))
+                Text("AI agent দিয়ে ঠিক করো")
+            }
+            Spacer(Modifier.height(4.dp))
             Button(onClick = onRetry, modifier = Modifier.fillMaxWidth()) {
                 Text("Try again")
             }

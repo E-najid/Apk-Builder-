@@ -1,9 +1,13 @@
 package com.enajid.apkbuilder.ui
 
 import androidx.compose.runtime.Composable
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.platform.LocalContext
 import androidx.navigation.NavHostController
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
@@ -97,12 +101,19 @@ private fun ApkBuilderNavHost(navController: NavHostController, startDestination
         ) { entry ->
             val owner = entry.arguments?.getString("owner").orEmpty()
             val repo = entry.arguments?.getString("repo").orEmpty()
+            // Prompt handed over by the build screen's "Fix with AI" button
+            // (set on this entry's savedStateHandle before popping back).
+            var agentPrompt by remember {
+                mutableStateOf(entry.savedStateHandle.remove<String>("agent_prompt"))
+            }
             EditorScreen(
                 owner = owner,
                 repo = repo,
                 onBack = { navController.popBackStack() },
                 onBuild = { navController.navigate(Routes.build(owner, repo)) },
+                initialAgentPrompt = agentPrompt,
             )
+            LaunchedEffect(Unit) { agentPrompt = null }
         }
         composable(
             route = Routes.BUILD,
@@ -118,6 +129,11 @@ private fun ApkBuilderNavHost(navController: NavHostController, startDestination
                 repo = repo,
                 onBack = { navController.popBackStack() },
                 onEditCode = { navController.popBackStack() },
+                onFixWithAi = { prompt ->
+                    navController.previousBackStackEntry?.savedStateHandle
+                        ?.set("agent_prompt", prompt)
+                    navController.popBackStack()
+                },
             )
         }
     }

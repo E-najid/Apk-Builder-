@@ -44,6 +44,7 @@ flow). This app is itself built by the same mechanism — see
 - [OAuth setup (important for contributors)](#oauth-setup)
 - [Architecture](#architecture)
 - [Why a native code editor (and not WebView + CodeMirror)](#why-a-native-code-editor)
+- [AI coding agent (OmniRoute)](#ai-coding-agent-omniroute)
 - [GitHub API usage](#github-api-usage)
 - [The project template](#the-project-template)
 - [Workflow generation (v1 static, v2 dynamic)](#workflow-generation)
@@ -220,6 +221,47 @@ highlighting, line numbers, cursor position display, auto-indent on Enter,
 unsaved-changes indicator with crash-safe local persistence, and smart
 back-navigation ("save & leave / discard").
 
+## AI coding agent (OmniRoute)
+
+The editor has a built-in coding agent (✨ button): you describe a feature or
+paste an error, the agent reads the project through the same file APIs and
+writes code — **as editable drafts**, exactly like your own edits. Nothing is
+pushed to GitHub until you press Save; the agent has no push access at all.
+
+The agent is powered by [OmniRoute](https://github.com/diegosouzapw/OmniRoute),
+a free, open-source AI gateway the user runs **locally on the same phone**
+inside [Termux](https://f-droid.org/en/packages/com.termux/). That keeps the
+project's zero-budget rule: no paid AI APIs, no backend of ours, and no code or
+keys leaving the device except to the AI providers the user themselves
+configured in OmniRoute's dashboard.
+
+Setup (the app walks you through this in the agent sheet, with copyable
+commands):
+
+1. Install Termux from F-Droid, then inside Termux:
+   `pkg install nodejs-lts git curl -y && npm install -g omniroute`
+2. Run `omniroute` (keep Termux alive; `termux-wake-lock` helps).
+3. Open `http://localhost:20128` in a browser, log in (default password
+   `++CHANGEME` — change it), and create an API key on the **Endpoint** page.
+4. Paste the key into the app's agent setup and press save — the app verifies
+   it by listing your models over `http://localhost:20128/v1`.
+
+How the agent works:
+
+- `data/ai/AiAgent.kt` runs an OpenAI-compatible tool-calling loop
+  (`read_file` / `write_file`, max 10 steps per message) against OmniRoute's
+  `/v1/chat/completions` endpoint.
+- The system prompt includes the project's file tree, package/SDK info and the
+  currently open file + selection, so the agent knows the codebase without
+  uploading it anywhere.
+- Writes land in the same draft store as manual edits (LocalProjectStore), so
+  unsaved agent changes survive crashes and are always user-reviewed.
+- When a GitHub Actions build fails, the failure digest can be sent straight
+  into the agent ("AI agent দিয়ে ঠিক করো" button) — it reads the relevant
+  files, fixes them as drafts, and you rebuild.
+- Cleartext HTTP is allowed **only** for `localhost`/`127.0.0.1`
+  (`network_security_config.xml`); everything else stays HTTPS-only.
+
 ## GitHub API usage
 
 Everything is called directly from the app with the user's OAuth token:
@@ -349,7 +391,8 @@ compileSdk 34), set your `GITHUB_CLIENT_ID` gradle property
   home screen, release (signed) builds via repo secrets.
 - **v2** — dynamic workflow generation (table above), Java/Flutter/React
   Native templates (the framework picker and `ProjectSpec` are already
-  framework-parametric), in-editor AI assistance.
+  framework-parametric). ~~In-editor AI assistance~~ — shipped as the
+  OmniRoute-powered coding agent (see above).
 - **Distribution** — GitHub Releases for the app itself, built and signed by
   the same workflow.
 

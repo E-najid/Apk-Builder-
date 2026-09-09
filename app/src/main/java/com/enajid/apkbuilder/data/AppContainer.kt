@@ -2,6 +2,8 @@ package com.enajid.apkbuilder.data
 
 import android.content.Context
 import android.os.SystemClock
+import com.enajid.apkbuilder.data.ai.AiSettingsStore
+import com.enajid.apkbuilder.data.ai.OmniRouteClient
 import kotlinx.serialization.json.Json
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
@@ -20,6 +22,11 @@ class AppContainer(context: Context) {
     val tokenStore = TokenStore(context)
     val localProjectStore = LocalProjectStore(context)
     val templateEngine = TemplateEngine(context)
+
+    // OmniRoute: the local AI gateway (run by the user in Termux) that powers
+    // the editor's coding agent. Settings live in app-private DataStore.
+    val aiSettings = AiSettingsStore(context)
+    val omniRouteClient = OmniRouteClient(aiSettings)
 
     private val json = Json {
         ignoreUnknownKeys = true

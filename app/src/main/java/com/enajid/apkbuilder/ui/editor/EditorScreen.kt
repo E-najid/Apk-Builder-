@@ -20,6 +20,7 @@ import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.Build
 import androidx.compose.material.icons.rounded.Folder
 import androidx.compose.material.icons.rounded.Save
+import androidx.compose.material.icons.rounded.SmartToy
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -53,6 +54,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.enajid.apkbuilder.domain.ProjectFiles
+import com.enajid.apkbuilder.ui.agent.AgentSheet
 import com.enajid.apkbuilder.ui.components.ErrorState
 import com.enajid.apkbuilder.ui.components.ScreenLoading
 import kotlinx.coroutines.launch
@@ -65,6 +67,7 @@ fun EditorScreen(
     onBack: () -> Unit,
     onBuild: () -> Unit,
     viewModel: EditorViewModel = viewModel(),
+    initialAgentPrompt: String? = null,
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val loadedFile by viewModel.selectedFile.collectAsStateWithLifecycle()
@@ -76,12 +79,19 @@ fun EditorScreen(
     var newFileDialog by remember { mutableStateOf(false) }
     var deleteFileTarget by remember { mutableStateOf<String?>(null) }
 
-    // Local text state, re-initialized whenever a different file is loaded.
-    var field by remember(loadedFile?.path) {
+    // Local text state, re-initialized whenever a different file is loaded —
+    // or the AI agent rewrites the one that's open (bumping its revision).
+    var field by remember(loadedFile?.path, loadedFile?.revision) {
         mutableStateOf(TextFieldValue(loadedFile?.content ?: ""))
     }
 
     BackHandler(enabled = state.dirty.isNotEmpty()) { exitDialog = true }
+
+    // Coming back from a failed build with "Fix with AI": open the agent
+    // chat with the error digest pre-filled.
+    LaunchedEffect(initialAgentPrompt) {
+        initialAgentPrompt?.let { viewModel.seedAgentInput(it) }
+    }
 
     LaunchedEffect(state.message) {
         state.message?.let {
@@ -109,6 +119,9 @@ fun EditorScreen(
                     }
                 },
                 actions = {
+                    IconButton(onClick = { viewModel.openAgent() }) {
+                        Icon(Icons.Rounded.SmartToy, contentDescription = "AI agent")
+                    }
                     IconButton(onClick = { drawerOpen = true }) {
                         Icon(Icons.Rounded.Folder, contentDescription = "Files")
                     }
@@ -193,6 +206,18 @@ fun EditorScreen(
             }
         }
     }
+
+    AgentSheet(
+        viewModel = viewModel,
+        selectionInfo = {
+            val sel = field.selection
+            val selected = field.text.substring(
+                sel.min.coerceIn(0, field.text.length),
+                sel.max.coerceIn(0, field.text.length),
+            )
+            state.selectedPath to selected.takeIf { it.isNotBlank() }
+        },
+    )
 
     if (exitDialog) {
         AlertDialog(
