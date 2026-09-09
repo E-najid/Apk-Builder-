@@ -115,6 +115,19 @@ interface GitHubApi {
         @Query("ref") ref: String,
     ): ContentFile
 
+    /**
+     * Creates or updates a single file via the Contents API. Unlike the Git
+     * Data API, this works on a repository with zero commits — GitHub makes
+     * the initial commit itself. Used to bootstrap empty repos.
+     */
+    @PUT("repos/{owner}/{repo}/contents/{path}")
+    suspend fun putContent(
+        @Path("owner") owner: String,
+        @Path("repo") repo: String,
+        @Path("path", encoded = true) path: String,
+        @Body body: ContentUpdateInput,
+    ): ResponseBody
+
     // ---- Actions API ----
 
     @GET("repos/{owner}/{repo}/actions/runs")

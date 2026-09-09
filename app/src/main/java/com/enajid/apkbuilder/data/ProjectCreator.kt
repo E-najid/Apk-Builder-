@@ -2,6 +2,7 @@ package com.enajid.apkbuilder.data
 
 import com.enajid.apkbuilder.domain.Framework
 import com.enajid.apkbuilder.domain.ProjectSpec
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -28,7 +29,7 @@ class ProjectCreator(
         val repoName = TemplateRenderer.repoNameFromAppName(spec.appName)
         val repo = projectsRepository.createProjectRepo(
             baseName = repoName,
-            description = "${spec.appName} — built with APK Builder",
+            description = "${spec.appName} — ${ProjectsRepository.DESCRIPTION_MARKER}",
         )
         val owner = repo.owner?.login ?: error("Repository has no owner")
         val branch = repo.default_branch.ifBlank { "main" }
@@ -40,12 +41,19 @@ class ProjectCreator(
             repo = repo.name,
             branch = branch,
             files = rendered.files,
-            deletions = rendered.deletions,
+            deletions = emptyList(), // a fresh repo has nothing to delete
             message = "Initial commit from APK Builder",
         )
 
         onStep(Step.FINISHING)
-        projectsRepository.markAsApkBuilderRepo(owner, repo.name)
+        try {
+            projectsRepository.markAsApkBuilderRepo(owner, repo.name)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            // The description already carries the fallback marker, so the
+            // project stays visible on the home screen even without the topic.
+        }
         repo
     }
 }

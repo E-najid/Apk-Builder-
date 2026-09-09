@@ -8,13 +8,18 @@ import retrofit2.HttpException
  * [pushFiles]: it creates blobs for every file, builds one tree on top of the
  * current branch, commits it and moves the ref — i.e. a multi-file push in a
  * single commit, exactly like git would do.
+ *
+ * GitHub's Git Data API refuses to operate on a repository with ZERO commits
+ * (409 "Git Repository is empty"), so [pushFiles] bootstraps such repos with
+ * a single Contents-API commit first (see [initializeEmptyRepo]).
  */
 class GitRepository(private val api: GitHubApi) {
 
     /**
      * Pushes [files] (and applies [deletions]) in one commit on [branch].
-     * Returns the new head SHA. Works on empty repositories too (creates the
-     * branch with its first commit).
+     * Returns the new head SHA. Works on completely empty repositories too —
+     * they are initialized with a placeholder commit first, which the real
+     * commit then builds on top of.
      */
     suspend fun pushFiles(
         owner: String,
@@ -26,13 +31,24 @@ class GitRepository(private val api: GitHubApi) {
     ): String {
         require(files.isNotEmpty() || deletions.isNotEmpty()) { "Nothing to commit" }
 
-        val headSha = headShaOf(owner, repo, branch)
+        var headSha = headShaOf(owner, repo, branch)
+        if (headSha == null) {
+            // Zero commits: the Git Data API can't touch this repo yet.
+            initializeEmptyRepo(owner, repo, branch)
+            headSha = headShaOf(owner, repo, branch)
+                ?: error("Could not initialize the '$branch' branch on GitHub")
+        }
 
-        // A brand-new repo has no base tree yet, so deletions are meaningless
-        // there — and GitHub rejects null-sha entries without a base tree.
-        // (This matters when the user picks a custom icon: the renderer asks
-        // to delete the default vector drawable, which doesn't exist yet.)
-        val effectiveDeletions = if (headSha == null) emptyList() else deletions
+        val baseCommit = api.getCommit(owner, repo, headSha)
+        val baseTreeSha = baseCommit.tree?.sha ?: error("Could not read the branch tree")
+
+        // Only delete paths that actually exist in the base tree — GitHub
+        // rejects null-sha entries for paths that aren't in it.
+        val existingPaths = api.getTree(owner, repo, baseTreeSha).tree
+            .filter { it.type == "blob" }
+            .map { it.path }
+            .toSet()
+        val effectiveDeletions = deletions.filter { it in existingPaths }
 
         val entries = files.map { file ->
             val blob = api.createBlob(
@@ -53,7 +69,6 @@ class GitRepository(private val api: GitHubApi) {
             TreeEntryInput(path = path, mode = "100644", type = "blob", sha = null)
         }
 
-        val baseTreeSha = headSha?.let { api.getCommit(owner, repo, it).tree?.sha }
         val tree = api.createTree(
             owner, repo,
             TreeInput(base_tree = baseTreeSha, tree = entries)
@@ -62,11 +77,7 @@ class GitRepository(private val api: GitHubApi) {
             owner, repo,
             CommitInput(message = message, tree = tree.sha, parents = listOfNotNull(headSha))
         )
-        if (headSha == null) {
-            api.createRef(owner, repo, CreateRefInput(ref = "refs/heads/$branch", sha = commit.sha))
-        } else {
-            api.updateRef(owner, repo, branch, UpdateRefInput(sha = commit.sha, force = false))
-        }
+        api.updateRef(owner, repo, branch, UpdateRefInput(sha = commit.sha, force = false))
         return commit.sha
     }
 
@@ -88,9 +99,12 @@ class GitRepository(private val api: GitHubApi) {
         return commit.sha
     }
 
-    /** Lists all file paths on [branch] (recursive). */
-    suspend fun listFiles(owner: String, repo: String, branch: String): List<TreeEntryOut> =
-        api.getTree(owner, repo, branch).tree.filter { it.type == "blob" }
+    /** Lists all file paths on [branch] (recursive). Empty list on an empty repo. */
+    suspend fun listFiles(owner: String, repo: String, branch: String): List<TreeEntryOut> {
+        val headSha = headShaOf(owner, repo, branch) ?: return emptyList()
+        val treeSha = api.getCommit(owner, repo, headSha).tree?.sha ?: return emptyList()
+        return api.getTree(owner, repo, treeSha).tree.filter { it.type == "blob" }
+    }
 
     /** Reads a single file's raw bytes. */
     suspend fun readFile(owner: String, repo: String, branch: String, path: String): ByteArray {
@@ -103,6 +117,31 @@ class GitRepository(private val api: GitHubApi) {
             Base64.decode(base64, Base64.DEFAULT)
         } else {
             base64.toByteArray(Charsets.UTF_8)
+        }
+    }
+
+    /**
+     * Gives a zero-commit repository its first commit via the Contents API
+     * (which, unlike the Git Data API, is allowed to do that). The placeholder
+     * README is overwritten by the real template push that follows.
+     */
+    private suspend fun initializeEmptyRepo(owner: String, repo: String, branch: String) {
+        try {
+            api.putContent(
+                owner, repo, "README.md",
+                ContentUpdateInput(
+                    message = "Initialize repository",
+                    content = Base64.encodeToString(
+                        "# Project\n\nSet up with APK Builder.\n".toByteArray(Charsets.UTF_8),
+                        Base64.NO_WRAP,
+                    ),
+                    branch = branch,
+                )
+            )
+        } catch (e: HttpException) {
+            // 409/422 here means the repo already got its first commit (e.g. a
+            // concurrent attempt) — nothing to initialize, carry on.
+            if (e.code() != 409 && e.code() != 422) throw e
         }
     }
 

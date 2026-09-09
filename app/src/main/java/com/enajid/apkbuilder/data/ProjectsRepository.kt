@@ -8,11 +8,11 @@ import retrofit2.HttpException
  */
 class ProjectsRepository(private val api: GitHubApi) {
 
-    suspend fun getRepo(owner: String, repo: String): GithubRepo = api.getRepo(owner, repo)
-
     /**
      * Lists the user's own repositories and returns the ones created by
-     * APK Builder (identified by the `apk-builder` topic).
+     * APK Builder. Primary marker: the `apk-builder` topic. Fallback marker:
+     * the description suffix we set at creation (in case setting the topic
+     * ever fails — the project must not become invisible).
      */
     suspend fun listProjects(): List<GithubRepo> {
         val all = mutableListOf<GithubRepo>()
@@ -24,15 +24,21 @@ class ProjectsRepository(private val api: GitHubApi) {
             page++
         }
         return all
-            .filter { it.topics.contains(MARKER_TOPIC) }
+            .filter { repo ->
+                repo.topics.contains(MARKER_TOPIC) ||
+                    repo.description?.contains(DESCRIPTION_MARKER) == true
+            }
             .sortedByDescending { (it.pushed_at ?: it.updated_at).orEmpty() }
     }
 
     /**
-     * Creates a fresh public repo. If the name is already taken on the
-     * account, first checks whether it's an *empty* repo left behind by a
-     * previous failed attempt — if so, reuses it instead of piling up
-     * "name-2", "name-3"… duplicates. Only then falls back to a suffixed name.
+     * Creates a fresh public repo, born with an initial commit
+     * (auto-init README) so the Git Data API can operate on it immediately.
+     *
+     * If the name is already taken on the account, checks whether it's a
+     * leftover from a previous failed attempt (public + essentially empty) —
+     * if so, reuses it instead of piling up "name-2", "name-3"… duplicates.
+     * Only then falls back to a suffixed name.
      */
     suspend fun createProjectRepo(baseName: String, description: String?): GithubRepo {
         val login = api.currentUser().login
@@ -45,18 +51,14 @@ class ProjectsRepository(private val api: GitHubApi) {
                         name = candidate,
                         description = description,
                         private = false,
-                        auto_init = false,
+                        auto_init = true,
                     )
                 )
             } catch (e: HttpException) {
                 lastError = e
                 if (e.code() != 422) throw e
                 val existing = runCatching { api.getRepo(login, candidate) }.getOrNull()
-                if (existing != null && existing.pushed_at.isNullOrBlank()) {
-                    // Same-name repo exists but nothing was ever pushed to it —
-                    // almost certainly an earlier attempt that failed midway.
-                    return existing
-                }
+                if (existing != null && isLeftoverAttempt(existing)) return existing
                 candidate = "$baseName-${attempt + 2}"
             }
         }
@@ -67,8 +69,32 @@ class ProjectsRepository(private val api: GitHubApi) {
         api.setTopics(owner, repo, TopicsInput(listOf(MARKER_TOPIC)))
     }
 
+    /**
+     * True when [repo] is almost certainly a leftover from a previous,
+     * failed create attempt: public, and containing nothing but the
+     * auto-init README (or no commits at all). Adopting it is safe; a real
+     * user repo with the same name never matches, so we rename instead of
+     * touching it.
+     */
+    private suspend fun isLeftoverAttempt(repo: GithubRepo): Boolean {
+        if (repo.private) return false
+        val owner = repo.owner?.login ?: return false
+        val branch = repo.default_branch.ifBlank { "main" }
+        val blobs = try {
+            api.getTree(owner, repo.name, branch).tree
+                .filter { it.type == "blob" }
+                .map { it.path }
+        } catch (e: HttpException) {
+            // 409 = zero commits ("Git Repository is empty"), 404 = no such
+            // ref — both mean "no real content", i.e. safe to adopt.
+            return e.code() == 409 || e.code() == 404
+        }
+        return blobs.all { it == "README.md" }
+    }
+
     companion object {
         const val MARKER_TOPIC = "apk-builder"
+        const val DESCRIPTION_MARKER = "built with APK Builder"
         private const val PAGE_SIZE = 100
         private const val MAX_PAGES = 5
         private const val NAME_ATTEMPTS = 5

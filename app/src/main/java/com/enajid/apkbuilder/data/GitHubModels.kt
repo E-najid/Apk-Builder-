@@ -131,6 +131,13 @@ data class ContentFile(
     val encoding: String? = null,
 )
 
+@Serializable
+data class ContentUpdateInput(
+    val message: String,
+    val content: String,
+    val branch: String? = null,
+)
+
 // ---- Actions API ------------------------------------------------------------
 
 @Serializable
