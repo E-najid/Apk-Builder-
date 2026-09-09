@@ -8,6 +8,8 @@ import retrofit2.HttpException
  */
 class ProjectsRepository(private val api: GitHubApi) {
 
+    suspend fun getRepo(owner: String, repo: String): GithubRepo = api.getRepo(owner, repo)
+
     /**
      * Lists the user's own repositories and returns the ones created by
      * APK Builder. Primary marker: the `apk-builder` topic. Fallback marker:
