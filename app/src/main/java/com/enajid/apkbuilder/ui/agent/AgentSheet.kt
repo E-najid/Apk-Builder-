@@ -63,8 +63,8 @@ import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.enajid.apkbuilder.data.ai.AiConfig
-import com.enajid.apkbuilder.ui.editor.AgentBubble
 import com.enajid.apkbuilder.ui.editor.EditorViewModel
+import com.enajid.apkbuilder.ui.editor.EditorViewModel.AgentBubble
 import com.enajid.apkbuilder.util.Intents
 import kotlinx.coroutines.delay
 
@@ -138,10 +138,10 @@ fun AgentSheet(
                 Spacer(Modifier.weight(1f))
                 Text(
                     text = when {
-                        state.checking → "checking…"
-                        state.reachable == true → "OmniRoute ✅"
-                        state.reachable == false → "OmniRoute ⛔"
-                        else → "OmniRoute"
+                        state.checking -> "checking…"
+                        state.reachable == true -> "OmniRoute ✅"
+                        state.reachable == false -> "OmniRoute ⛔"
+                        else -> "OmniRoute"
                     },
                     style = MaterialTheme.typography.labelMedium,
                     color = if (state.reachable == false) {
