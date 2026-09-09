@@ -203,6 +203,7 @@ fun AgentSheet(
             if (showSetup) {
                 AgentSetupContent(
                     state = state,
+                    modifier = Modifier.weight(1f),
                     onSave = { key, baseUrl, model ->
                         viewModel.saveAgentConfig(key, baseUrl, model)
                     },
@@ -335,6 +336,7 @@ private fun AgentBubbleRow(bubble: AgentBubble) {
 @Composable
 private fun AgentSetupContent(
     state: EditorViewModel.AgentUiState,
+    modifier: Modifier = Modifier,
     onSave: (apiKey: String, baseUrl: String, model: String) -> Unit,
     onLoadModels: () -> Unit,
     onSetModel: (String) -> Unit,
@@ -347,8 +349,7 @@ private fun AgentSetupContent(
     var model by remember(state.model) { mutableStateOf(state.model) }
 
     LazyColumn(
-        Modifier
-            .weight(1f)
+        modifier
             .fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
