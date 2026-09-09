@@ -17,7 +17,7 @@ class TemplateEngine(private val context: Context) {
             context.assets.open("${TemplateRenderer.TEMPLATE_ROOT}/dot-github/workflows/build.yml")
                 .use { it.readBytes() }
         } catch (e: IOException) {
-            throw TemplateAssetMissingException("$TEMPLATE_ROOT/dot-github/workflows/build.yml")
+            throw TemplateAssetMissingException("${TemplateRenderer.TEMPLATE_ROOT}/dot-github/workflows/build.yml")
         }
         return TemplateRenderer.RenderedFile(
             path = ".github/workflows/build.yml",

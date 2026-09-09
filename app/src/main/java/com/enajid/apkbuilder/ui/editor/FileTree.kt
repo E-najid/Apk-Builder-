@@ -103,6 +103,7 @@ fun FileTreeDrawer(
     dirty: Set<String>,
     selectedPath: String?,
     onSelect: (String) -> Unit,
+    onFileLongPress: (String) -> Unit,
     onClose: () -> Unit,
     onNewFile: () -> Unit,
 ) {

@@ -74,6 +74,7 @@ fun EditorScreen(
     var drawerOpen by remember { mutableStateOf(false) }
     var exitDialog by remember { mutableStateOf(false) }
     var newFileDialog by remember { mutableStateOf(false) }
+    var deleteFileTarget by remember { mutableStateOf<String?>(null) }
 
     // Local text state, re-initialized whenever a different file is loaded.
     var field by remember(loadedFile?.path) {
