@@ -109,7 +109,7 @@ object ZipProjectScanner {
     /** Reads `<string name="app_name">…</string>` from res/values/strings.xml. */
     private fun detectAppName(files: Map<String, ByteArray>): String? {
         val candidates = files.keys
-            .filter { Regex("""(^|/)res/values/strings\.xml$""").matches(it) }
+            .filter { Regex("""(^|/)res/values/strings\.xml$""").containsMatchIn(it) }
             .sortedBy { it.length }
         for (path in candidates) {
             val text = String(files.getValue(path))
@@ -129,7 +129,7 @@ object ZipProjectScanner {
     private fun detectIcon(files: Map<String, ByteArray>): ByteArray? {
         val iconPattern = Regex("""(^|/)res/mipmap-[^/]+/ic_launcher\.(png|webp)$""")
         val densityOrder = listOf("xxxhdpi", "xxhdpi", "xhdpi", "hdpi", "mdpi")
-        val candidates = files.keys.filter { iconPattern.matches(it) }
+        val candidates = files.keys.filter { iconPattern.containsMatchIn(it) }
         val ranked = candidates.sortedWith(
             compareByDescending<String> { path ->
                 densityOrder.indexOfFirst { path.contains("mipmap-$it/") }

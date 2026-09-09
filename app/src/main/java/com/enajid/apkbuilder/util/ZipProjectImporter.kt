@@ -221,7 +221,7 @@ object ZipProjectImporter {
                     name == "AndroidManifest.xml" ||
                     name == "strings.xml" || name == "build.gradle" || name == "build.gradle.kts" ||
                     name == "settings.gradle" || name == "settings.gradle.kts" ||
-                    Regex("""(^|/)res/mipmap-[^/]+/ic_launcher\.(png|webp)$""").matches(rel) ||
+                    Regex("""(^|/)res/mipmap-[^/]+/ic_launcher\.(png|webp)$""").containsMatchIn(rel) ||
                     (name == "package.json" && rel.substringBeforeLast('/').isEmpty())
                 if (isInteresting && !out.containsKey(rel)) {
                     runCatching { out[rel] = file.readBytes() }
