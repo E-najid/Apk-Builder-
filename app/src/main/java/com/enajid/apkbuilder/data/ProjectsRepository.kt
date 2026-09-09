@@ -67,6 +67,10 @@ class ProjectsRepository(private val api: GitHubApi) {
         throw lastError ?: IllegalStateException("Could not create the repository")
     }
 
+    suspend fun deleteProject(owner: String, repo: String) {
+        api.deleteRepo(owner, repo)
+    }
+
     suspend fun markAsApkBuilderRepo(owner: String, repo: String) {
         api.setTopics(owner, repo, TopicsInput(listOf(MARKER_TOPIC)))
     }

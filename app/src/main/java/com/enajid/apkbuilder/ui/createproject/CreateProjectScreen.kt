@@ -1,7 +1,6 @@
 package com.enajid.apkbuilder.ui.createproject
 
 import android.graphics.BitmapFactory
-
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
@@ -24,8 +23,11 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
+import androidx.compose.material.icons.rounded.EditNote
 import androidx.compose.material.icons.rounded.ExpandMore
+import androidx.compose.material.icons.rounded.FolderZip
 import androidx.compose.material.icons.rounded.Smartphone
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -43,7 +45,6 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -56,15 +57,14 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
-
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.enajid.apkbuilder.data.ProjectCreator
 import com.enajid.apkbuilder.domain.Framework
 import com.enajid.apkbuilder.domain.PackageNames
+import com.enajid.apkbuilder.domain.ProjectSource
 
 private val MIN_SDK_OPTIONS = listOf(24, 26, 28, 29, 31, 33, 34)
 private val TARGET_SDK_OPTIONS = listOf(34, 33, 31, 29)
@@ -82,6 +82,10 @@ fun CreateProjectScreen(
     val iconPicker = rememberLauncherForActivityResult(
         ActivityResultContracts.PickVisualMedia()
     ) { uri -> if (uri != null) viewModel.onIconPicked(uri) }
+
+    val zipPicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri -> if (uri != null) viewModel.onZipPicked(uri) }
 
     LaunchedEffect(state.error) {
         state.error?.let {
@@ -121,6 +125,84 @@ fun CreateProjectScreen(
                     .padding(horizontal = 16.dp),
                 verticalArrangement = Arrangement.spacedBy(4.dp),
             ) {
+                Spacer(Modifier.height(8.dp))
+
+                Text(
+                    "Start with",
+                    style = MaterialTheme.typography.titleSmall,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    SourceCard(
+                        title = "Blank project",
+                        subtitle = "A ready-made Kotlin template",
+                        icon = Icons.Rounded.EditNote,
+                        selected = state.source == ProjectSource.SCRATCH,
+                        onClick = { viewModel.setSource(ProjectSource.SCRATCH) },
+                        modifier = Modifier.weight(1f),
+                    )
+                    SourceCard(
+                        title = "Upload a .zip",
+                        subtitle = "Import an existing project",
+                        icon = Icons.Rounded.FolderZip,
+                        selected = state.source == ProjectSource.UPLOAD,
+                        onClick = { viewModel.setSource(ProjectSource.UPLOAD) },
+                        modifier = Modifier.weight(1f),
+                    )
+                }
+
+                if (state.source == ProjectSource.UPLOAD) {
+                    Spacer(Modifier.height(4.dp))
+                    if (state.zipScanning) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 12.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        ) {
+                            CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
+                            Text("Reading the zip…")
+                        }
+                    } else {
+                        OutlinedButton(
+                            onClick = {
+                                zipPicker.launch(
+                                    arrayOf(
+                                        "application/zip",
+                                        "application/x-zip-compressed",
+                                        "application/octet-stream",
+                                    )
+                                )
+                            },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 4.dp),
+                        ) {
+                            Icon(Icons.Rounded.FolderZip, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Spacer(Modifier.width(8.dp))
+                            Text(
+                                if (state.zipSummary == null) "Choose project zip (max 50 MB)"
+                                else "Choose a different zip"
+                            )
+                        }
+                        state.zipSummary?.let { summary ->
+                            Text(
+                                summary,
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.tertiary,
+                            )
+                        }
+                        state.frameworkNotice?.let { notice ->
+                            Text(
+                                notice,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+                }
+
                 Spacer(Modifier.height(8.dp))
 
                 OutlinedTextField(
@@ -181,6 +263,7 @@ fun CreateProjectScreen(
                     FrameworkCard(
                         framework = framework,
                         selected = state.framework == framework,
+                        enabled = framework.available || state.source == ProjectSource.UPLOAD,
                         onSelect = { viewModel.setFramework(framework) },
                     )
                 }
@@ -237,6 +320,27 @@ fun CreateProjectScreen(
             }
         }
     }
+
+    if (state.pendingWorkflowChoice) {
+        AlertDialog(
+            onDismissRequest = { viewModel.onWorkflowChoice(false) },
+            title = { Text("The zip contains its own build workflow") },
+            text = {
+                Text(
+                    "Your project already has .github/workflows/build.yml.\n\n" +
+                        "Keep it, or replace it with APK Builder’s standard workflow?"
+                )
+            },
+            confirmButton = {
+                Button(onClick = { viewModel.onWorkflowChoice(true) }) { Text("Keep mine") }
+            },
+            dismissButton = {
+                OutlinedButton(onClick = { viewModel.onWorkflowChoice(false) }) {
+                    Text("Replace with APK Builder’s")
+                }
+            },
+        )
+    }
 }
 
 @Composable
@@ -258,6 +362,45 @@ private fun CreatingOverlay(step: ProjectCreator.Step?) {
                 },
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onPrimary,
+            )
+        }
+    }
+}
+
+@Composable
+private fun SourceCard(
+    title: String,
+    subtitle: String,
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    selected: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Card(
+        onClick = onClick,
+        modifier = modifier,
+        colors = if (selected) {
+            CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)
+        } else {
+            CardDefaults.cardColors()
+        },
+    ) {
+        Column(Modifier.padding(12.dp)) {
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                tint = if (selected) {
+                    MaterialTheme.colorScheme.onPrimaryContainer
+                } else {
+                    MaterialTheme.colorScheme.onSurfaceVariant
+                },
+            )
+            Spacer(Modifier.height(6.dp))
+            Text(title, style = MaterialTheme.typography.titleSmall)
+            Text(
+                subtitle,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
     }
@@ -311,7 +454,7 @@ private fun IconPickerRow(
             )
         }
         if (iconBytes != null) {
-            TextButton(onClick = onReset) { Text("Reset") }
+            OutlinedButton(onClick = onReset) { Text("Reset") }
         }
     }
 }
@@ -320,11 +463,12 @@ private fun IconPickerRow(
 private fun FrameworkCard(
     framework: Framework,
     selected: Boolean,
+    enabled: Boolean,
     onSelect: () -> Unit,
 ) {
     Card(
         onClick = onSelect,
-        enabled = framework.available,
+        enabled = enabled,
         modifier = Modifier.fillMaxWidth(),
         colors = if (selected) {
             CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)
@@ -336,11 +480,11 @@ private fun FrameworkCard(
             modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            RadioButton(selected = selected, onClick = null, enabled = framework.available)
+            RadioButton(selected = selected, onClick = null, enabled = enabled)
             Column(Modifier.weight(1f)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(framework.label, style = MaterialTheme.typography.titleSmall)
-                    if (!framework.available) {
+                    if (!framework.available && !selected) {
                         Spacer(Modifier.width(8.dp))
                         Text(
                             "Coming soon",

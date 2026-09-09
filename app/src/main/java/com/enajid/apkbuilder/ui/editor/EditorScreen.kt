@@ -21,6 +21,8 @@ import androidx.compose.material.icons.rounded.Build
 import androidx.compose.material.icons.rounded.Folder
 import androidx.compose.material.icons.rounded.Save
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.HorizontalDivider
@@ -50,6 +52,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.enajid.apkbuilder.domain.ProjectFiles
 import com.enajid.apkbuilder.ui.components.ErrorState
 import com.enajid.apkbuilder.ui.components.ScreenLoading
 import kotlinx.coroutines.launch
@@ -174,6 +177,9 @@ fun EditorScreen(
                                 viewModel.select(it)
                                 drawerOpen = false
                             },
+                            onFileLongPress = { path ->
+                                deleteFileTarget = path
+                            },
                             onClose = { drawerOpen = false },
                             onNewFile = { newFileDialog = true },
                         )
@@ -217,6 +223,50 @@ fun EditorScreen(
                 viewModel.newFile(path)
             },
         )
+    }
+
+    deleteFileTarget?.let { path ->
+        val criticalReason = ProjectFiles.criticalReason(path)
+        if (criticalReason != null) {
+            AlertDialog(
+                onDismissRequest = { deleteFileTarget = null },
+                title = { Text("Can’t delete this file") },
+                text = { Text(criticalReason) },
+                confirmButton = {
+                    TextButton(onClick = { deleteFileTarget = null }) { Text("Got it") }
+                },
+            )
+        } else {
+            AlertDialog(
+                onDismissRequest = { if (!state.deleting) deleteFileTarget = null },
+                title = { Text("Delete “${path.substringAfterLast('/')}”?") },
+                text = {
+                    Text(
+                        "The file is deleted from GitHub immediately, with everything in it. " +
+                            "This cannot be undone.\n\n$path"
+                    )
+                },
+                confirmButton = {
+                    if (state.deleting) {
+                        CircularProgressIndicator(Modifier.size(22.dp))
+                    } else {
+                        TextButton(
+                            onClick = {
+                                viewModel.deleteFile(path)
+                            },
+                            colors = ButtonDefaults.textButtonColors(
+                                contentColor = MaterialTheme.colorScheme.error,
+                            ),
+                        ) { Text("Delete") }
+                    }
+                },
+                dismissButton = {
+                    if (!state.deleting) {
+                        TextButton(onClick = { deleteFileTarget = null }) { Text("Cancel") }
+                    }
+                },
+            )
+        }
     }
 }
 

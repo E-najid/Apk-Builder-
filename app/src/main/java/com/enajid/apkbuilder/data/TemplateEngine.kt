@@ -11,6 +11,20 @@ class TemplateAssetMissingException(path: String) :
 /** Android side of the template engine: reads template files from assets. */
 class TemplateEngine(private val context: Context) {
 
+    /** Reads template files from assets. */
+    fun workflowFile(): TemplateRenderer.RenderedFile {
+        val bytes = try {
+            context.assets.open("${TemplateRenderer.TEMPLATE_ROOT}/dot-github/workflows/build.yml")
+                .use { it.readBytes() }
+        } catch (e: IOException) {
+            throw TemplateAssetMissingException("$TEMPLATE_ROOT/dot-github/workflows/build.yml")
+        }
+        return TemplateRenderer.RenderedFile(
+            path = ".github/workflows/build.yml",
+            content = bytes,
+        )
+    }
+
     fun render(spec: ProjectSpec): TemplateRenderer.RenderResult =
         TemplateRenderer.render(spec) { assetPath ->
             try {

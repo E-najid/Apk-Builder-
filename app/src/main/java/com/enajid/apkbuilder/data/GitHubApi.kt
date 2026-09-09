@@ -2,7 +2,9 @@ package com.enajid.apkbuilder.data
 
 import okhttp3.ResponseBody
 import retrofit2.http.Body
+import retrofit2.http.DELETE
 import retrofit2.http.GET
+import retrofit2.http.HTTP
 import retrofit2.http.PATCH
 import retrofit2.http.POST
 import retrofit2.http.PUT
@@ -126,6 +128,25 @@ interface GitHubApi {
         @Path("repo") repo: String,
         @Path("path", encoded = true) path: String,
         @Body body: ContentUpdateInput,
+    ): ResponseBody
+
+    /**
+     * Deletes a single file via the Contents API. Requires the file's current
+     * blob sha; GitHub creates the deletion commit itself.
+     */
+    @HTTP(method = "DELETE", path = "repos/{owner}/{repo}/contents/{path}", hasBody = true)
+    suspend fun deleteContent(
+        @Path("owner") owner: String,
+        @Path("repo") repo: String,
+        @Path("path", encoded = true) path: String,
+        @Body body: ContentDeleteInput,
+    ): ResponseBody
+
+    /** Permanently deletes a repository. Needs the delete_repo scope. */
+    @DELETE("repos/{owner}/{repo}")
+    suspend fun deleteRepo(
+        @Path("owner") owner: String,
+        @Path("repo") repo: String,
     ): ResponseBody
 
     // ---- Actions API ----

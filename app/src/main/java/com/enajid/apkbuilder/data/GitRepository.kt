@@ -121,6 +121,27 @@ class GitRepository(private val api: GitHubApi) {
     }
 
     /**
+     * Deletes a single file via the Contents API (GitHub creates the commit).
+     * [sha] must be the file's current blob sha, e.g. from the git tree.
+     */
+    suspend fun deleteFile(
+        owner: String,
+        repo: String,
+        branch: String,
+        path: String,
+        sha: String,
+    ) {
+        api.deleteContent(
+            owner, repo, path,
+            ContentDeleteInput(
+                message = "Delete ${path.substringAfterLast('/')} (from APK Builder)",
+                sha = sha,
+                branch = branch,
+            ),
+        )
+    }
+
+    /**
      * Gives a zero-commit repository its first commit via the Contents API
      * (which, unlike the Git Data API, is allowed to do that). The placeholder
      * README is overwritten by the real template push that follows.

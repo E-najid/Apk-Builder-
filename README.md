@@ -146,12 +146,35 @@ token) lives in app-private storage / DataStore.
 
 **Create project.** The user fills in a form (name, icon, package name, SDK
 levels, framework). The app: slugifies the name, creates a **public** repo via
-`POST /user/repos`, renders the Kotlin template (see below) and pushes **all
-17 files in a single commit** using the Git Data API (blobs → tree → commit →
-ref update — the same thing `git push` does, minus the git binary). Finally it
-tags the repo with the `apk-builder` topic, which is how the home screen
-recognizes projects later. To the user it's just a loading spinner followed by
-the code editor.
+`POST /user/repos` (born with an initial commit — GitHub's Git Data API can't
+operate on zero-commit repos), renders the Kotlin template (see below) and
+pushes **all 17 files in a single commit** using the Git Data API (blobs →
+tree → commit → ref update — the same thing `git push` does, minus the git
+binary). Finally it tags the repo with the `apk-builder` topic, which is how
+the home screen recognizes projects later. To the user it's just a loading
+spinner followed by the code editor.
+
+**Import from zip.** Instead of the blank template, the user can upload a zip
+of an existing project (≤ 50 MB). The zip is extracted in the app's private
+cache — build outputs, `.git/`, `.gradle/`, `node_modules/` and keystores are
+never pushed — and scanned locally (text only, nothing is ever executed) to
+pre-fill the form: app name from `strings.xml`/manifest label, package from
+`namespace`/`applicationId`, SDKs from the Gradle config, framework from
+config files/extension counts, icon from `res/mipmap-*`. If the zip already
+has a `build.yml`, the user chooses to keep or replace it. Unrecognizable
+zips are rejected with a clear message instead of a confusing empty form.
+
+**Delete project.** Long-press a card (or its ⋮ menu) → confirm →
+`DELETE /repos/{owner}/{repo}`. Confirmation always required; the card only
+disappears after GitHub confirms. Deleting needs the `delete_repo` scope —
+if the token predates it, the app says so and offers a quick re-sign-in.
+
+**Delete file.** Long-press a file in the editor tree → confirm →
+`DELETE /repos/.../contents/{path}` (fetched sha first). If the deleted file
+was open, the editor switches to another one. Files the cloud build can't
+live without (`build.gradle(.kts)`, `AndroidManifest.xml`, `gradlew`,
+`settings.gradle(.kts)`, the wrapper, the workflow) are protected with an
+explanation instead of a delete button.
 
 **Build.** Tapping *Build* commits any unsaved editor changes — or, if there
 are none, creates an **empty commit** so the workflow's `push` trigger still

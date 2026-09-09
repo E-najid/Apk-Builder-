@@ -10,8 +10,12 @@ import com.enajid.apkbuilder.data.TemplateRenderer
 import com.enajid.apkbuilder.data.friendlyMessage
 import com.enajid.apkbuilder.domain.Framework
 import com.enajid.apkbuilder.domain.PackageNames
+import com.enajid.apkbuilder.domain.ProjectSource
 import com.enajid.apkbuilder.domain.ProjectSpec
+import com.enajid.apkbuilder.domain.ZipProjectScanner
 import com.enajid.apkbuilder.util.IconUtils
+import com.enajid.apkbuilder.util.ImportOutcome
+import com.enajid.apkbuilder.util.ZipProjectImporter
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -20,9 +24,11 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.File
 
 data class CreateUiState(
     val login: String? = null,
+    val source: ProjectSource = ProjectSource.SCRATCH,
     val appName: String = "",
     val packageName: String = "",
     val packageEdited: Boolean = false,
@@ -35,6 +41,17 @@ data class CreateUiState(
     val error: String? = null,
     /** owner to repo of the freshly created project — triggers navigation. */
     val created: Pair<String, String>? = null,
+    // --- zip upload flow ---
+    val zipScanning: Boolean = false,
+    /** Short summary of what was detected, shown above the form. */
+    val zipSummary: String? = null,
+    val zipFileCount: Int = 0,
+    val isGradleProject: Boolean = true,
+    val hasOwnWorkflow: Boolean = false,
+    /** True when the zip contains its own build.yml and the user must choose. */
+    val pendingWorkflowChoice: Boolean = false,
+    /** Short note for frameworks whose cloud build isn't v1 (Flutter/RN/Java). */
+    val frameworkNotice: String? = null,
 )
 
 class CreateProjectViewModel(application: Application) : AndroidViewModel(application) {
@@ -46,11 +63,24 @@ class CreateProjectViewModel(application: Application) : AndroidViewModel(applic
     private val _state = MutableStateFlow(CreateUiState())
     val state = _state.asStateFlow()
 
+    private var uploadRootDir: File? = null
+    private var workflowKeep: Boolean? = null
+
     init {
         viewModelScope.launch {
             val login = withContext(Dispatchers.IO) { tokenStore.loginFlow.first() }
             _state.update { it.copy(login = login) }
         }
+    }
+
+    override fun onCleared() {
+        ZipProjectImporter.cleanup(uploadRootDir)
+        uploadRootDir = null
+        super.onCleared()
+    }
+
+    fun setSource(source: ProjectSource) {
+        _state.update { it.copy(source = source) }
     }
 
     fun setAppName(value: String) {
@@ -76,7 +106,11 @@ class CreateProjectViewModel(application: Application) : AndroidViewModel(applic
     }
 
     fun setFramework(framework: Framework) {
-        if (framework.available) _state.update { it.copy(framework = framework) }
+        // From scratch, only Kotlin can actually be created in v1.
+        // Uploading a zip works for any Gradle project, so everything is
+        // selectable there.
+        if (_state.value.source == ProjectSource.SCRATCH && !framework.available) return
+        _state.update { it.copy(framework = framework) }
     }
 
     fun onIconPicked(uri: Uri) {
@@ -98,6 +132,98 @@ class CreateProjectViewModel(application: Application) : AndroidViewModel(applic
 
     fun onNavigated() = _state.update { it.copy(created = null) }
 
+    // ------------------------------------------------------------------ zip --
+
+    fun onZipPicked(uri: Uri) {
+        viewModelScope.launch {
+            try {
+                _state.update { it.copy(zipScanning = true, error = null, zipSummary = null) }
+                val outcome = withContext(Dispatchers.IO) {
+                    ZipProjectImporter.import(getApplication(), uri)
+                }
+                when (outcome) {
+                    is ImportOutcome.TooLarge -> _state.update {
+                        it.copy(
+                            zipScanning = false,
+                            error = "That zip is ${(outcome.sizeBytes / 1_048_576) + 1} MB — the " +
+                                "limit is 50 MB. Remove build outputs (build/, .gradle/) and try again.",
+                        )
+                    }
+                    is ImportOutcome.Failed -> _state.update {
+                        it.copy(zipScanning = false, error = outcome.message)
+                    }
+                    is ImportOutcome.Success -> applyScan(outcome)
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                _state.update { it.copy(zipScanning = false, error = e.friendlyMessage()) }
+            }
+        }
+    }
+
+    private fun applyScan(outcome: ImportOutcome.Success) {
+        val scan = ZipProjectScanner.scan(outcome.scanFiles)
+        if (!scan.valid) {
+            ZipProjectImporter.cleanup(outcome.rootDir)
+            _state.update {
+                it.copy(zipScanning = false, error = scan.invalidReason ?: "The zip couldn’t be read.")
+            }
+            return
+        }
+        // Fresh upload: drop any previous one.
+        ZipProjectImporter.cleanup(uploadRootDir)
+        uploadRootDir = outcome.rootDir
+        workflowKeep = null
+
+        val detectedFramework = scan.framework
+        val notice = when (detectedFramework) {
+            Framework.FLUTTER ->
+                "Flutter detected. Your code is pushed as-is; cloud builds for Flutter " +
+                    "arrive in the next version."
+            Framework.REACT_NATIVE ->
+                "React Native detected. Your code is pushed as-is; cloud builds for React " +
+                    "Native arrive in the next version."
+            else -> if (!scan.isGradleProject) {
+                "This doesn’t look like a standard Gradle project — the cloud build may " +
+                    "not work, but your code will be safely on GitHub."
+            } else null
+        }
+
+        _state.update {
+            it.copy(
+                zipScanning = false,
+                source = ProjectSource.UPLOAD,
+                appName = scan.appName.orEmpty(),
+                packageName = scan.packageName.orEmpty(),
+                packageEdited = scan.packageName != null,
+                minSdk = scan.minSdk ?: 24,
+                targetSdk = scan.targetSdk ?: 34,
+                framework = detectedFramework ?: Framework.KOTLIN,
+                iconBytes = scan.iconBytes,
+                zipFileCount = outcome.fileCount,
+                isGradleProject = scan.isGradleProject,
+                hasOwnWorkflow = scan.hasOwnWorkflow,
+                pendingWorkflowChoice = false,
+                frameworkNotice = notice,
+                zipSummary = buildString {
+                    append("Detected: ")
+                    append(detectedFramework?.label ?: "unknown framework")
+                    if (scan.isGradleProject) append(" · Gradle project")
+                    append(" · ${outcome.fileCount} files")
+                },
+            )
+        }
+    }
+
+    // -------------------------------------------------------------- creation --
+
+    fun onWorkflowChoice(keep: Boolean) {
+        workflowKeep = keep
+        _state.update { it.copy(pendingWorkflowChoice = false) }
+        create()
+    }
+
     fun create() {
         val current = _state.value
         when {
@@ -107,11 +233,21 @@ class CreateProjectViewModel(application: Application) : AndroidViewModel(applic
                 _state.update { it.copy(error = "The package name isn't valid yet") }
             current.targetSdk < current.minSdk ->
                 _state.update { it.copy(error = "Target SDK can't be lower than the minimum SDK") }
-            !current.framework.available ->
+            current.source == ProjectSource.SCRATCH && !current.framework.available ->
                 _state.update { it.copy(error = "That framework is coming soon — pick Kotlin for now") }
+            current.source == ProjectSource.UPLOAD && uploadRootDir == null ->
+                _state.update { it.copy(error = "Choose a project zip first") }
+            current.source == ProjectSource.UPLOAD &&
+                current.hasOwnWorkflow && workflowKeep == null ->
+                _state.update { it.copy(pendingWorkflowChoice = true) }
             else -> viewModelScope.launch {
                 _state.update {
-                    it.copy(creating = true, error = null, creatingStep = ProjectCreator.Step.CREATING_REPO)
+                    it.copy(
+                        creating = true,
+                        error = null,
+                        pendingWorkflowChoice = false,
+                        creatingStep = ProjectCreator.Step.CREATING_REPO,
+                    )
                 }
                 try {
                     val spec = ProjectSpec(
@@ -120,11 +256,30 @@ class CreateProjectViewModel(application: Application) : AndroidViewModel(applic
                         minSdk = current.minSdk,
                         targetSdk = current.targetSdk,
                         framework = current.framework,
-                        iconPng = current.iconBytes,
+                        iconPng = if (current.source == ProjectSource.SCRATCH) current.iconBytes else null,
                     )
-                    val repo = projectCreator.createKotlinProject(spec) { step ->
-                        _state.update { it.copy(creatingStep = step) }
+                    val repo = when (current.source) {
+                        ProjectSource.SCRATCH ->
+                            projectCreator.createKotlinProject(spec) { step ->
+                                _state.update { it.copy(creatingStep = step) }
+                            }
+                        ProjectSource.UPLOAD -> {
+                            val root = requireNotNull(uploadRootDir) { "No uploaded project" }
+                            val files = withContext(Dispatchers.IO) {
+                                ZipProjectImporter.buildPushFiles(root)
+                            }
+                            val useOwnWorkflow = current.hasOwnWorkflow && workflowKeep == true
+                            projectCreator.createProjectFromZip(
+                                spec,
+                                files,
+                                useOwnWorkflow = useOwnWorkflow,
+                            ) { step ->
+                                _state.update { it.copy(creatingStep = step) }
+                            }
+                        }
                     }
+                    ZipProjectImporter.cleanup(uploadRootDir)
+                    uploadRootDir = null
                     _state.update {
                         it.copy(
                             creating = false,
@@ -134,7 +289,6 @@ class CreateProjectViewModel(application: Application) : AndroidViewModel(applic
                 } catch (e: CancellationException) {
                     throw e
                 } catch (e: Exception) {
-                    // Say WHERE it failed so the user isn't left guessing.
                     val where = when (_state.value.creatingStep) {
                         ProjectCreator.Step.CREATING_REPO -> "while creating the GitHub repository"
                         ProjectCreator.Step.UPLOADING_CODE -> "while uploading the project files"
@@ -154,5 +308,5 @@ class CreateProjectViewModel(application: Application) : AndroidViewModel(applic
 
     /** Shown under the app name so users know where the code will live. */
     fun suggestedRepoName(): String =
-        TemplateRenderer.repoNameFromAppName(_state.value.appName)
+        TemplateRenderer.repoNameFromAppName(_state.value.appName.ifBlank { "android-project" })
 }

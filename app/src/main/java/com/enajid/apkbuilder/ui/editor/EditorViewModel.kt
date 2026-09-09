@@ -10,6 +10,7 @@ import com.enajid.apkbuilder.data.LocalProjectStore
 import com.enajid.apkbuilder.data.ProjectsRepository
 import com.enajid.apkbuilder.data.TemplateRenderer
 import com.enajid.apkbuilder.data.friendlyMessage
+import com.enajid.apkbuilder.domain.ProjectFiles
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -38,6 +39,7 @@ class EditorViewModel(
         val fileLoading: Boolean = false,
         val dirty: Set<String> = emptySet(),
         val saving: Boolean = false,
+        val deleting: Boolean = false,
         val message: String? = null,
     )
 
@@ -56,6 +58,8 @@ class EditorViewModel(
     val selectedFile = _selectedFile.asStateFlow()
 
     private var serverPaths: List<String> = emptyList()
+    /** Current blob sha per path — needed to delete files via the Contents API. */
+    private var shasByPath: Map<String, String> = emptyMap()
     private val dirtyContents = LinkedHashMap<String, String>()
     private var branch: String = "main"
     private var debounce: Job? = null
@@ -72,6 +76,7 @@ class EditorViewModel(
                 branch = repoInfo.default_branch.ifBlank { "main" }
                 val entries = git.listFiles(owner, repo, branch)
                 serverPaths = entries.map { it.path }
+                shasByPath = entries.associate { it.path to it.sha }
                 val localDirty = withContext(Dispatchers.IO) { localStore.loadDirty(owner, repo) }
                 dirtyContents.clear()
                 dirtyContents.putAll(localDirty)
@@ -80,7 +85,7 @@ class EditorViewModel(
                         loading = false,
                         repoName = repoInfo.name,
                         branch = branch,
-                        paths = (serverPaths + dirtyContents.keys).sorted(),
+                        paths = (serverPaths + dirtyContents.keys).distinct().sorted(),
                         dirty = dirtyContents.keys.toSet(),
                     )
                 }
@@ -123,7 +128,7 @@ class EditorViewModel(
                 throw e
             } catch (e: Exception) {
                 _state.update {
-                    it.copy(fileLoading = false, message = "Couldn't open the file: ${e.friendlyMessage()}")
+                    it.copy(fileLoading = false, message = "Couldn’t open the file: ${e.friendlyMessage()}")
                 }
             }
         }
@@ -175,8 +180,81 @@ class EditorViewModel(
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            _state.update { it.copy(saving = false, message = "Couldn't save: ${e.friendlyMessage()}") }
+            _state.update { it.copy(saving = false, message = "Couldn’t save: ${e.friendlyMessage()}") }
             false
+        }
+    }
+
+    /**
+     * Deletes a file from GitHub (or, if it was never committed, just from
+     * the local draft store). If the deleted file is open, switches to
+     * another one — or the empty state when none remain.
+     */
+    fun deleteFile(path: String) {
+        ProjectFiles.criticalReason(path)?.let { reason ->
+            _state.update { it.copy(message = reason) }
+            return
+        }
+        if (_state.value.deleting) return
+        viewModelScope.launch {
+            try {
+                _state.update { it.copy(deleting = true) }
+                val sha = shasByPath[path]
+                if (sha != null) {
+                    git.deleteFile(owner, repo, branch, path, sha)
+                    serverPaths = serverPaths - path
+                    shasByPath = shasByPath - path
+                }
+                dirtyContents.remove(path)
+                withContext(Dispatchers.IO) { localStore.removeDirtyFile(owner, repo, path) }
+
+                val remaining = (serverPaths + dirtyContents.keys).distinct().sorted()
+                val wasSelected = _state.value.selectedPath == path
+                if (wasSelected) {
+                    val next = remaining.firstOrNull { it.endsWith(".kt") } ?: remaining.firstOrNull()
+                    if (next != null) {
+                        _state.update {
+                            it.copy(
+                                deleting = false,
+                                paths = remaining,
+                                dirty = dirtyContents.keys.toSet(),
+                                selectedPath = null,
+                                message = "Deleted $path",
+                            )
+                        }
+                        _selectedFile.value = null
+                        select(next)
+                    } else {
+                        _selectedFile.value = null
+                        _state.update {
+                            it.copy(
+                                deleting = false,
+                                paths = remaining,
+                                dirty = dirtyContents.keys.toSet(),
+                                selectedPath = null,
+                                fileLoading = false,
+                                selectedIsBinary = false,
+                                message = "Deleted $path",
+                            )
+                        }
+                    }
+                } else {
+                    _state.update {
+                        it.copy(
+                            deleting = false,
+                            paths = remaining,
+                            dirty = dirtyContents.keys.toSet(),
+                            message = "Deleted $path",
+                        )
+                    }
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                _state.update {
+                    it.copy(deleting = false, message = "Couldn’t delete $path: ${e.friendlyMessage()}")
+                }
+            }
         }
     }
 
@@ -204,7 +282,7 @@ class EditorViewModel(
         }
         _state.update {
             it.copy(
-                paths = (serverPaths + dirtyContents.keys).sorted(),
+                paths = (serverPaths + dirtyContents.keys).distinct().sorted(),
                 dirty = dirtyContents.keys.toSet(),
             )
         }

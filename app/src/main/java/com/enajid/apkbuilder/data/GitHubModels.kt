@@ -138,6 +138,13 @@ data class ContentUpdateInput(
     val branch: String? = null,
 )
 
+@Serializable
+data class ContentDeleteInput(
+    val message: String,
+    val sha: String,
+    val branch: String? = null,
+)
+
 // ---- Actions API ------------------------------------------------------------
 
 @Serializable

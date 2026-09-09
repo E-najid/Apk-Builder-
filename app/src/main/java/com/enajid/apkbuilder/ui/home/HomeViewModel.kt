@@ -14,6 +14,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import retrofit2.HttpException
 
 data class HomeUiState(
     val login: String? = null,
@@ -21,6 +22,11 @@ data class HomeUiState(
     val refreshing: Boolean = false,
     val projects: List<GithubRepo> = emptyList(),
     val error: String? = null,
+    /** Repo currently being deleted (its GitHub id), for per-card progress. */
+    val deletingRepoId: Long? = null,
+    /** True when deletion failed because the token lacks the delete permission. */
+    val reauthNeeded: Boolean = false,
+    val message: String? = null,
 )
 
 class HomeViewModel(application: Application) : AndroidViewModel(application) {
@@ -61,6 +67,62 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
     }
+
+    /**
+     * Permanently deletes the project's GitHub repository. The card stays in
+     * the list unless the API call succeeds — no optimistic UI for
+     * destructive actions.
+     */
+    fun deleteProject(project: GithubRepo) {
+        if (_state.value.deletingRepoId != null) return
+        viewModelScope.launch {
+            try {
+                _state.update { it.copy(deletingRepoId = project.id) }
+                val owner = project.owner?.login ?: project.full_name.substringBefore('/')
+                projectsRepository.deleteProject(owner, project.name)
+                _state.update {
+                    it.copy(
+                        deletingRepoId = null,
+                        projects = it.projects.filterNot { p -> p.id == project.id },
+                        message = "Deleted “${project.name}”",
+                    )
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: HttpException) {
+                when {
+                    // 404 with an existing repo = token lacks delete_repo;
+                    // 404 with a gone repo = already deleted on github.com.
+                    e.code() == 404 -> {
+                        val owner = project.owner?.login ?: project.full_name.substringBefore('/')
+                        val stillExists =
+                            runCatching { projectsRepository.getRepo(owner, project.name) }.getOrNull()
+                        if (stillExists != null) {
+                            _state.update { it.copy(deletingRepoId = null, reauthNeeded = true) }
+                        } else {
+                            _state.update {
+                                it.copy(
+                                    deletingRepoId = null,
+                                    projects = it.projects.filterNot { p -> p.id == project.id },
+                                    message = "“${project.name}” was already gone from GitHub",
+                                )
+                            }
+                        }
+                    }
+                    e.code() == 403 -> _state.update { it.copy(deletingRepoId = null, reauthNeeded = true) }
+                    else -> _state.update {
+                        it.copy(deletingRepoId = null, message = "Couldn’t delete: ${e.friendlyMessage()}")
+                    }
+                }
+            } catch (e: Exception) {
+                _state.update { it.copy(deletingRepoId = null, message = "Couldn’t delete: ${e.friendlyMessage()}") }
+            }
+        }
+    }
+
+    fun consumeMessage() = _state.update { it.copy(message = null) }
+
+    fun dismissReauth() = _state.update { it.copy(reauthNeeded = false) }
 
     fun signOut() {
         viewModelScope.launch {

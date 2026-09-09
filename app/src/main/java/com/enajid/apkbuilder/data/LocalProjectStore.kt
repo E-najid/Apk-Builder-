@@ -37,6 +37,19 @@ class LocalProjectStore(private val context: Context) {
         file.writeText(json.encodeToString(Store.serializer(), Store(files)))
     }
 
+    /** Removes a single path from the unsaved-edits cache (e.g. file deleted). */
+    fun removeDirtyFile(owner: String, repo: String, path: String) {
+        val files = loadDirty(owner, repo).toMutableMap()
+        if (files.remove(path) == null) return
+        val file = fileFor(owner, repo)
+        if (files.isEmpty()) {
+            file.delete()
+        } else {
+            file.parentFile?.mkdirs()
+            file.writeText(json.encodeToString(Store.serializer(), Store(files)))
+        }
+    }
+
     fun clearDirty(owner: String, repo: String) {
         fileFor(owner, repo).delete()
     }

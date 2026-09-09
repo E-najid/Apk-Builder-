@@ -195,6 +195,9 @@ fun FileTreeDrawer(
                                         onSelect(item.node.path)
                                     }
                                 },
+                                onLongClick = {
+                                    if (!item.node.isDir) onFileLongPress(item.node.path)
+                                },
                             )
                         }
                     }
@@ -204,6 +207,7 @@ fun FileTreeDrawer(
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun FileRow(
     node: FileNode,
@@ -212,11 +216,12 @@ private fun FileRow(
     selected: Boolean,
     dirty: Boolean,
     onClick: () -> Unit,
+    onLongClick: () -> Unit,
 ) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(onClick = onClick)
+            .combinedClickable(onClick = onClick, onLongClick = onLongClick)
             .padding(
                 start = 12.dp + (depth * 14).dp,
                 end = 12.dp,

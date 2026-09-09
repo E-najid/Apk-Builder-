@@ -1,6 +1,8 @@
 package com.enajid.apkbuilder.ui.home
 
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -19,9 +21,16 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.Logout
 import androidx.compose.material.icons.rounded.Add
+import androidx.compose.material.icons.rounded.Delete
+import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.rounded.RocketLaunch
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExtendedFloatingActionButton
@@ -29,10 +38,13 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -59,6 +71,16 @@ fun HomeScreen(
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     var confirmSignOut by remember { mutableStateOf(false) }
+    var menuFor by remember { mutableStateOf<GithubRepo?>(null) }
+    var deleteTarget by remember { mutableStateOf<GithubRepo?>(null) }
+    val snackbarHostState = remember { SnackbarHostState() }
+
+    LaunchedEffect(state.message) {
+        state.message?.let {
+            snackbarHostState.showSnackbar(it)
+            viewModel.consumeMessage()
+        }
+    }
 
     Scaffold(
         topBar = {
@@ -88,6 +110,7 @@ fun HomeScreen(
                 },
             )
         },
+        snackbarHost = { SnackbarHost(snackbarHostState) },
         floatingActionButton = {
             ExtendedFloatingActionButton(
                 onClick = onCreate,
@@ -125,10 +148,21 @@ fun HomeScreen(
                     verticalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
                     items(state.projects, key = { it.id }) { project ->
-                        ProjectCard(project = project, onClick = {
-                            val owner = project.owner?.login ?: project.full_name.substringBefore('/')
-                            onOpen(owner, project.name)
-                        })
+                        ProjectCard(
+                            project = project,
+                            menuOpen = menuFor?.id == project.id,
+                            deleting = state.deletingRepoId == project.id,
+                            onClick = {
+                                val owner = project.owner?.login ?: project.full_name.substringBefore('/')
+                                onOpen(owner, project.name)
+                            },
+                            onLongClick = { deleteTarget = project },
+                            onMenuToggle = { open -> menuFor = if (open) project else null },
+                            onDeleteClick = {
+                                menuFor = null
+                                deleteTarget = project
+                            },
+                        )
                     }
                 }
             }
@@ -150,13 +184,81 @@ fun HomeScreen(
             },
         )
     }
+
+    deleteTarget?.let { project ->
+        val deleting = state.deletingRepoId == project.id
+        AlertDialog(
+            onDismissRequest = { if (!deleting) deleteTarget = null },
+            title = { Text("Delete “${project.name}”?") },
+            text = {
+                Text(
+                    "This permanently deletes the GitHub repository " +
+                        "${project.full_name} — all code, history and build artifacts. " +
+                        "This cannot be undone."
+                )
+            },
+            confirmButton = {
+                if (deleting) {
+                    Box(Modifier.padding(12.dp)) {
+                        CircularProgressIndicator(Modifier.size(22.dp))
+                    }
+                } else {
+                    TextButton(
+                        onClick = { viewModel.deleteProject(project) },
+                        colors = ButtonDefaults.textButtonColors(
+                            contentColor = MaterialTheme.colorScheme.error,
+                        ),
+                    ) { Text("Delete permanently") }
+                }
+            },
+            dismissButton = {
+                if (!deleting) {
+                    TextButton(onClick = { deleteTarget = null }) { Text("Cancel") }
+                }
+            },
+        )
+    }
+
+    if (state.reauthNeeded) {
+        AlertDialog(
+            onDismissRequest = { viewModel.dismissReauth() },
+            title = { Text("One more permission needed") },
+            text = {
+                Text(
+                    "Deleting projects needs the “delete repositories” permission, which " +
+                        "wasn’t part of the permissions you granted at sign-in. Sign out and " +
+                        "sign back in to grant it — your projects stay untouched.\n\n" +
+                        "(You can also always delete repositories directly on github.com.)"
+                )
+            },
+            confirmButton = {
+                Button(onClick = { viewModel.dismissReauth(); viewModel.signOut() }) {
+                    Text("Sign out & re-connect")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { viewModel.dismissReauth() }) { Text("Not now") }
+            },
+        )
+    }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun ProjectCard(project: GithubRepo, onClick: () -> Unit) {
-    ElevatedCard(onClick = onClick, modifier = Modifier.fillMaxWidth()) {
+private fun ProjectCard(
+    project: GithubRepo,
+    menuOpen: Boolean,
+    deleting: Boolean,
+    onClick: () -> Unit,
+    onLongClick: () -> Unit,
+    onMenuToggle: (Boolean) -> Unit,
+    onDeleteClick: () -> Unit,
+) {
+    ElevatedCard(Modifier.fillMaxWidth()) {
         Row(
-            modifier = Modifier.padding(16.dp),
+            modifier = Modifier
+                .combinedClickable(onClick = onClick, onLongClick = onLongClick)
+                .padding(start = 16.dp, top = 16.dp, bottom = 16.dp, end = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Box(
@@ -193,6 +295,36 @@ private fun ProjectCard(project: GithubRepo, onClick: () -> Unit) {
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+            }
+            Box {
+                if (deleting) {
+                    CircularProgressIndicator(
+                        modifier = Modifier
+                            .padding(horizontal = 12.dp)
+                            .size(20.dp),
+                        strokeWidth = 2.dp,
+                    )
+                } else {
+                    IconButton(onClick = { onMenuToggle(true) }) {
+                        Icon(Icons.Rounded.MoreVert, contentDescription = "Options")
+                    }
+                    DropdownMenu(
+                        expanded = menuOpen,
+                        onDismissRequest = { onMenuToggle(false) },
+                    ) {
+                        DropdownMenuItem(
+                            text = { Text("Delete project") },
+                            leadingIcon = {
+                                Icon(
+                                    Icons.Rounded.Delete,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.error,
+                                )
+                            },
+                            onClick = onDeleteClick,
+                        )
+                    }
+                }
             }
         }
     }
