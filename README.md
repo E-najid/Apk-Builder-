@@ -241,10 +241,20 @@ commands):
 1. Install Termux from F-Droid, then inside Termux:
    `pkg install nodejs-lts git curl -y && npm install -g omniroute`
 2. Run `omniroute` (keep Termux alive; `termux-wake-lock` helps).
-3. Open `http://localhost:20128` in a browser, log in (default password
-   `++CHANGEME` — change it), and create an API key on the **Endpoint** page.
-4. Paste the key into the app's agent setup and press save — the app verifies
-   it by listing your models over `http://localhost:20128/v1`.
+3. Open `http://localhost:20128` in a browser and log in (default password
+   `++CHANGEME` — change it).
+4. **Connect an AI provider** — OmniRoute is a gateway, not a model, so it
+   needs at least one provider before anything works. In the dashboard's
+   Providers page connect a free no-auth provider (Kiro AI, Qwen, Qoder,
+   Pollinations — no OAuth, no card), or OAuth a subscription you already
+   have (Claude Code, Codex, Copilot, …).
+5. Create an API key on the **Endpoint** page, paste it into the app's agent
+   setup and press save — the app verifies it by listing your models over
+   `http://localhost:20128/v1`.
+
+The default model is `auto/coding:free`, a built-in OmniRoute alias that
+routes each request to the best **free** model among the connected providers,
+so the whole setup stays at $0.
 
 How the agent works:
 

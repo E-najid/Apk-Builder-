@@ -13,6 +13,7 @@ import com.enajid.apkbuilder.data.LocalProjectStore
 import com.enajid.apkbuilder.data.ProjectsRepository
 import com.enajid.apkbuilder.data.TemplateRenderer
 import com.enajid.apkbuilder.data.ai.AgentEvent
+import com.enajid.apkbuilder.data.ai.AiConfig
 import com.enajid.apkbuilder.data.ai.AgentProjectAccess
 import com.enajid.apkbuilder.data.ai.AiAgent
 import com.enajid.apkbuilder.data.ai.AiSettingsStore
@@ -566,7 +567,7 @@ class EditorViewModel(
                 val system = buildSystemPrompt(selectedPath, selectedCode)
                 val agent = AiAgent(omniRoute, projectAccess)
                 val result = agent.run(
-                    model = config.model.ifBlank { "auto/coding" },
+                    model = config.model.ifBlank { AiConfig.DEFAULT_MODEL },
                     systemPrompt = system,
                     history = agentHistory.toList(),
                     userMessage = text,

@@ -397,6 +397,22 @@ private fun AgentSetupContent(
         item {
             SetupStep(
                 number = "4",
+                title = "ফ্রি AI provider connect করো (সবচেয়ে জরুরি!)",
+                body = "OmniRoute নিজে AI নয় — এটা gateway, তোমার connect করা AI-কে ডাকে। " +
+                    "ড্যাশবোর্ড → Providers → Add Provider → ফ্রি একটা বেছে নাও: " +
+                    "Kiro AI (ফ্রি Claude), Qwen (unlimited), Qoder বা Pollinations — " +
+                    "OAuth, API key, কার্ড কিছুই লাগে না, শুধু Connect চাপো। " +
+                    "Claude/Codex-এর subscription থাকলে সেগুলো OAuth করলে আরও ভালো model পাবে।",
+                action = {
+                    OutlinedButton(onClick = { Intents.openUrl(context, OMNIROUTE_DASHBOARD_URL) }) {
+                        Text("Providers পেজ খোলো")
+                    }
+                },
+            )
+        }
+        item {
+            SetupStep(
+                number = "5",
                 title = "API key নাও",
                 body = "ব্রাউজারে ড্যাশবোর্ড খোলো → পাসওয়ার্ড (প্রথমবার: ++CHANGEME) দিয়ে লগইন → " +
                     "সাথে সাথে পাসওয়ার্ড বদলে ফেলো → Endpoint পেজ থেকে API key copy করো।",
@@ -409,7 +425,7 @@ private fun AgentSetupContent(
         }
         item {
             SetupStep(
-                number = "5",
+                number = "6",
                 title = "Key নিচে বসাও",
                 body = null,
                 action = {},
@@ -440,7 +456,7 @@ private fun AgentSetupContent(
                     label = { Text("Model") },
                     singleLine = true,
                     supportingText = {
-                        Text("যেমন: auto/coding — বা \"Models লোড করো\" থেকে বেছে নাও")
+                        Text("ডিফল্ট auto/coding:free — শুধুই ফ্রি model-এ যায়। \"Models লোড করো\" থেকেও বেছে নিতে পারো")
                     },
                     modifier = Modifier.fillMaxWidth(),
                 )

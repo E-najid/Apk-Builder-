@@ -24,6 +24,15 @@ interface ChatApi {
 
 class OmniRouteException(message: String) : Exception(message)
 
+/**
+ * The most common OmniRoute failure: it answered, but with nothing usable —
+ * almost always "no provider connected yet" or "every free quota exhausted".
+ */
+private const val NO_PROVIDER_HINT =
+    "OmniRoute কোনো উত্তর দেয়নি। সাধারণত এর মানে: কোনো AI provider connect করা নেই, " +
+        "বা ফ্রি quota শেষ। ড্যাশবোর্ড (localhost:20128) → Providers → ফ্রি provider " +
+        "(যেমন Kiro AI, Qwen) Connect করো, তারপর আবার পাঠাও।"
+
 enum class OmniRouteStatus { RUNNING, STOPPED }
 
 /**
@@ -77,8 +86,14 @@ class OmniRouteClient(private val settings: AiSettingsStore) : ChatApi {
         response.use {
             val text = it.body?.string().orEmpty()
             if (!it.isSuccessful) throw OmniRouteException(friendlyHttp(it.code, text))
-            return runCatching { json.decodeFromString(ChatResponse.serializer(), text) }
+            val decoded = runCatching { json.decodeFromString(ChatResponse.serializer(), text) }
                 .getOrElse { throw OmniRouteException("Unexpected response from OmniRoute.") }
+            val message = decoded.choices.firstOrNull()?.message
+            val hasToolCalls = message?.tool_calls?.isNotEmpty() == true
+            if (message == null || (message.content.isNullOrBlank() && !hasToolCalls)) {
+                throw OmniRouteException(NO_PROVIDER_HINT)
+            }
+            return decoded
         }
     }
 
@@ -128,9 +143,18 @@ class OmniRouteClient(private val settings: AiSettingsStore) : ChatApi {
             (error?.get("message") as? JsonPrimitive)?.contentOrNull
                 ?: (obj?.get("message") as? JsonPrimitive)?.contentOrNull
         }.getOrNull()
-        return when (code) {
-            401 -> "OmniRoute rejected the API key — copy a fresh one from its dashboard (Endpoint page)."
-            404 -> "Endpoint not found — check the base URL (usually ${AiConfig.DEFAULT_BASE_URL})."
+        val hint = message?.lowercase() ?: ""
+        return when {
+            code == 401 ->
+                "OmniRoute rejected the API key — copy a fresh one from its dashboard (Endpoint page)."
+            code == 404 ->
+                "Endpoint not found — check the base URL (usually ${AiConfig.DEFAULT_BASE_URL})."
+            hint.contains("no provider") || hint.contains("not connected") ||
+                hint.contains("no route") || hint.contains("no available") ||
+                hint.contains("did not provide") -> NO_PROVIDER_HINT
+            code == 429 || hint.contains("quota") || hint.contains("rate limit") ->
+                "ফ্রি quota/limit শেষ — ড্যাশবোর্ডে আরেকটা ফ্রি provider যোগ করো " +
+                    "(Kiro AI, Qwen, Pollinations) বা একটু পরে আবার চেষ্টা করো।"
             else -> message?.takeIf { it.isNotBlank() } ?: "OmniRoute error (HTTP $code)."
         }
     }

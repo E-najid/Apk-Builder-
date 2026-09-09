@@ -20,7 +20,12 @@ data class AiConfig(
     companion object {
         /** OmniRoute's default local endpoint (run by the user in Termux). */
         const val DEFAULT_BASE_URL = "http://localhost:20128/v1"
-        const val DEFAULT_MODEL = "auto/coding"
+
+        /**
+         * Built-in OmniRoute alias that routes each request to the best FREE
+         * model among the user's connected providers — keeps everything at $0.
+         */
+        const val DEFAULT_MODEL = "auto/coding:free"
     }
 }
 
