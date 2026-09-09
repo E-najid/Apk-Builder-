@@ -386,9 +386,11 @@ private fun AgentSetupContent(
             SetupStep(
                 number = "3",
                 title = "OmniRoute চালাও",
-                body = "চালু থাকা অবস্থায় এই অ্যাপে ফিরে এসো। স্ক্রিন বন্ধ করলেও চলতে থাকবে; " +
-                    "চাইলে Termux-এর notification থেকে \"Acquire wakelock\" দাও।",
+                body = "নিচের কমান্ডটা দাও, চালু থাকা অবস্থায় এই অ্যাপে ফিরে এসো। স্ক্রিন বন্ধ করলেও " +
+                    "চলতে থাকবে; চাইলে Termux-এর notification থেকে \"Acquire wakelock\" দাও।",
                 code = OMNIROUTE_RUN_COMMAND,
+                secondCode = "mkdir -p ~/.termux && echo allow-external-apps=true >> ~/.termux/termux.properties",
+                secondCodeNote = "\"Termux-এ চালাও\" বাটন ব্যবহার করতে চাইলে একবার এটাও দাও:",
                 clipboard = clipboard,
             )
         }
@@ -510,6 +512,8 @@ private fun SetupStep(
     title: String,
     body: String?,
     code: String? = null,
+    secondCode: String? = null,
+    secondCodeNote: String? = null,
     action: @Composable () -> Unit = {},
     clipboard: androidx.compose.ui.platform.ClipboardManager? = null,
 ) {
@@ -559,6 +563,46 @@ private fun SetupStep(
                         }
                         clipboard?.let { cm ->
                             IconButton(onClick = { cm.setText(AnnotatedString(codeText)) }) {
+                                Icon(
+                                    Icons.Rounded.ContentCopy,
+                                    contentDescription = "Copy",
+                                    modifier = Modifier.size(16.dp),
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+            if (secondCode != null) {
+                Spacer(Modifier.height(6.dp))
+                secondCodeNote?.let {
+                    Text(
+                        it,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Spacer(Modifier.height(2.dp))
+                Surface(
+                    color = MaterialTheme.colorScheme.surfaceVariant,
+                    shape = RoundedCornerShape(8.dp),
+                ) {
+                    Row(
+                        Modifier
+                            .fillMaxWidth()
+                            .padding(start = 10.dp, top = 8.dp, bottom = 8.dp, end = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        SelectionContainer(Modifier.weight(1f)) {
+                            Text(
+                                secondCode,
+                                style = MaterialTheme.typography.labelSmall,
+                                fontFamily = FontFamily.Monospace,
+                                fontSize = 10.sp,
+                            )
+                        }
+                        clipboard?.let { cm ->
+                            IconButton(onClick = { cm.setText(AnnotatedString(secondCode)) }) {
                                 Icon(
                                     Icons.Rounded.ContentCopy,
                                     contentDescription = "Copy",
