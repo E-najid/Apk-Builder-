@@ -17,7 +17,7 @@ private class ScriptedApi(private val responses: MutableList<ChatResponse>) : Ch
     }
 }
 
-private class FakeProject : AgentProjectAccess {
+private class TestProject : AgentProjectAccess {
     val files = mutableMapOf("app/build.gradle.kts" to "minSdk = 24")
 
     override suspend fun listPaths(): List<String> = files.keys.toList()
@@ -55,7 +55,7 @@ class MultiModelAgentTest {
         val reviewer = ScriptedApi(mutableListOf(textResponse("OK")))
         val agent = MultiModelAgent(chat = coder, reviewer = reviewer, reviewerModel = "review-model")
 
-        val result = agent.run("coder-model", "sys", emptyList(), "add a class", FakeProject()) {}
+        val result = agent.run("coder-model", "sys", emptyList(), "add a class", TestProject()) {}
 
         assertEquals("Added A.kt", result.finalText)
         // coder: write round + final answer; no fix round
@@ -80,7 +80,7 @@ class MultiModelAgentTest {
         val reviewer = ScriptedApi(mutableListOf(textResponse("1. A.kt: missing package declaration")))
         val agent = MultiModelAgent(chat = coder, reviewer = reviewer, reviewerModel = "r")
 
-        val result = agent.run("c", "sys", emptyList(), "add a class", FakeProject()) {}
+        val result = agent.run("c", "sys", emptyList(), "add a class", TestProject()) {}
 
         assertEquals("Fixed the import", result.finalText)
         assertEquals(3, coder.requests.size)
@@ -100,7 +100,7 @@ class MultiModelAgentTest {
         reviewer.failWith = AiException("reviewer provider down")
         val agent = MultiModelAgent(chat = coder, reviewer = reviewer, reviewerModel = "r")
 
-        val result = agent.run("c", "s", emptyList(), "x", FakeProject()) {}
+        val result = agent.run("c", "s", emptyList(), "x", TestProject()) {}
 
         assertEquals("done", result.finalText)
         assertEquals(2, coder.requests.size)
@@ -111,7 +111,7 @@ class MultiModelAgentTest {
         val coder = ScriptedApi(mutableListOf(writeResponse("A.kt"), textResponse("done")))
         val agent = MultiModelAgent(chat = coder, reviewer = null, reviewerModel = null)
 
-        val result = agent.run("c", "s", emptyList(), "x", FakeProject()) {}
+        val result = agent.run("c", "s", emptyList(), "x", TestProject()) {}
 
         assertEquals("done", result.finalText)
         assertEquals(2, coder.requests.size)
