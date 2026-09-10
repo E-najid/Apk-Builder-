@@ -14,6 +14,7 @@ import com.enajid.apkbuilder.data.ai.AgentProjectAccess
 import com.enajid.apkbuilder.data.ai.AiDebugLog
 import com.enajid.apkbuilder.data.ai.AiProfilesStore
 import com.enajid.apkbuilder.data.ai.ChatMessage
+import com.enajid.apkbuilder.data.ai.ChatRequest
 import com.enajid.apkbuilder.data.ai.FallbackChatApi
 import com.enajid.apkbuilder.data.ai.ModelProfile
 import com.enajid.apkbuilder.data.ai.ModelRole

@@ -51,7 +51,7 @@ object AiDebugLog {
 
         // Load the previous session's tail so crash evidence is visible.
         io.execute {
-            val tail = runCatching { logFile?.readLines() }.getOrDefault(emptyList())
+            val tail = runCatching { logFile?.readLines().orEmpty() }.getOrDefault(emptyList())
                 .takeLast(MAX_PERSISTED_LINES)
             if (tail.isNotEmpty()) {
                 log(
