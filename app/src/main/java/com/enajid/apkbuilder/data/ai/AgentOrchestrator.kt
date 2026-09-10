@@ -112,10 +112,15 @@ class MultiModelAgent(
         val finalText = result.finalText ?: return null
         if (access.writtenPaths.isEmpty()) return null
 
-        val filesSection = access.writtenPaths.joinToString("\n\n") { path ->
+        val filesBuilder = StringBuilder()
+        for (path in access.writtenPaths) {
+            if (filesBuilder.length >= MAX_REVIEW_TOTAL_CHARS) break
             val content = access.readFile(path).orEmpty()
-            "--- $path ---\n" + content.take(MAX_REVIEW_FILE_CHARS)
-        }.take(MAX_REVIEW_TOTAL_CHARS)
+            if (filesBuilder.isNotEmpty()) filesBuilder.append("\n\n")
+            filesBuilder.append("--- ").append(path).append(" ---\n")
+                .append(content.take(MAX_REVIEW_FILE_CHARS))
+        }
+        val filesSection = filesBuilder.toString().take(MAX_REVIEW_TOTAL_CHARS)
 
         val request = ChatRequest(
             model = reviewerId,
