@@ -104,6 +104,22 @@ class AiAgentTest {
     }
 
     @Test
+    fun `empty model answer fails with a helpful error`() = runBlocking {
+        val empty = ChatResponse(
+            choices = listOf(Choice(message = AssistantMessage(content = null)))
+        )
+        val api = FakeChatApi(mutableListOf(empty))
+        val agent = AiAgent(api, FakeProject())
+
+        try {
+            agent.run("m", "s", emptyList(), "x") {}
+            throw AssertionError("expected AiException")
+        } catch (e: AiException) {
+            assertTrue(e.message!!, e.message!!.contains("tool"))
+        }
+    }
+
+    @Test
     fun `step limit stops the loop`() = runBlocking {
         val endless = ChatResponse(
             choices = listOf(

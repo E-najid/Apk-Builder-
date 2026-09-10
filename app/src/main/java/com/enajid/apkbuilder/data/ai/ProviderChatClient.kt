@@ -27,7 +27,8 @@ class AiException(message: String) : Exception(message)
 /**
  * Generic OpenAI-compatible client: works with OpenRouter, Groq, Google
  * Gemini (OpenAI endpoint), Cerebras and any custom base URL. One instance
- * per model profile; the OkHttp client is shared.
+ * per model profile; the OkHttp client is shared. Every call is recorded in
+ * [AiDebugLog] (the 🐞 pane shows it).
  */
 class ProviderChatClient(
     private val baseUrl: String,
@@ -36,14 +37,35 @@ class ProviderChatClient(
 
     constructor(profile: ModelProfile) : this(profile.baseUrl, profile.apiKey)
 
+    init {
+        val trimmed = baseUrl.trim()
+        if (!trimmed.startsWith("http://") && !trimmed.startsWith("https://")) {
+            AiDebugLog.error("http", "Base URL অবৈধ: \"${trimmed.take(40)}\"")
+            throw AiException(
+                "Base URL ঠিক নয় — http:// বা https:// দিয়ে শুরু হতে হবে " +
+                    "(পেয়েছি: \"${trimmed.take(40)}\")"
+            )
+        }
+    }
+
     private val json = Json {
         ignoreUnknownKeys = true
         encodeDefaults = true // keep "type":"function" etc. in tool specs
     }
 
     override suspend fun chat(request: ChatRequest): ChatResponse {
+        val url = baseUrl.trimEnd('/') + "/chat/completions"
+        AiDebugLog.info(
+            "http",
+            "→ POST /chat/completions · model=${request.model} · " +
+                "messages=${request.messages.size} · tools=${request.tools?.size ?: 0} · " +
+                "key=${AiDebugLog.redact(apiKey)}",
+            details = json.encodeToString(ChatRequest.serializer(), request).take(1500),
+        )
+        val startedAt = System.currentTimeMillis()
+
         val httpRequest = Request.Builder()
-            .url(baseUrl.trimEnd('/') + "/chat/completions")
+            .url(url)
             .header("Authorization", "Bearer $apiKey")
             .header("X-Title", "APK Builder")
             .post(
@@ -55,36 +77,82 @@ class ProviderChatClient(
         val response = try {
             client.newCall(httpRequest).await()
         } catch (e: IOException) {
+            AiDebugLog.error("http", "✗ network error after ${System.currentTimeMillis() - startedAt}ms: $url", e)
             throw AiException(
                 "provider-এ পৌঁছানো যাচ্ছে না ($baseUrl) — internet ও base URL ঠিক আছে কিনা দেখো।"
             )
         }
         response.use {
+            val elapsed = System.currentTimeMillis() - startedAt
             val text = it.body?.string().orEmpty()
-            if (!it.isSuccessful) throw AiException(friendlyHttp(it.code, text))
-            return runCatching { json.decodeFromString(ChatResponse.serializer(), text) }
-                .getOrElse { throw AiException("provider-এর উত্তর বোঝা যায়নি (Unexpected response).") }
+            if (!it.isSuccessful) {
+                AiDebugLog.warn(
+                    "http",
+                    "← HTTP ${it.code} in ${elapsed}ms ($url)",
+                    details = text.take(800),
+                )
+                throw AiException(friendlyHttp(it.code, text))
+            }
+            val decoded = runCatching { json.decodeFromString(ChatResponse.serializer(), text) }
+                .getOrElse {
+                    AiDebugLog.error("http", "← HTTP 200 কিন্তু JSON বোঝা যায়নি", it)
+                    throw AiException("provider-এর উত্তর বোঝা যায়নি (Unexpected response)।")
+                }
+            val message = decoded.choices.firstOrNull()?.message
+            val toolNames = message?.tool_calls.orEmpty().joinToString(", ") { c -> c.function.name }
+            val summary = if (toolNames.isNotEmpty()) {
+                "tool_calls: $toolNames"
+            } else {
+                "text ${message?.content?.length ?: 0} chars"
+            }
+            AiDebugLog.ok(
+                "http",
+                "← HTTP 200 in ${elapsed}ms · $summary",
+                details = message?.content?.take(400),
+            )
+            return decoded
         }
     }
 
     /** Model ids for the picker in the setup dialog. */
     suspend fun listModels(): List<String> {
+        val url = baseUrl.trimEnd('/') + "/models"
+        AiDebugLog.info("http", "→ GET /models · key=${AiDebugLog.redact(apiKey)} · $url")
+        val startedAt = System.currentTimeMillis()
         val request = Request.Builder()
-            .url(baseUrl.trimEnd('/') + "/models")
+            .url(url)
             .header("Authorization", "Bearer $apiKey")
             .get()
             .build()
         val response = try {
             client.newCall(request).await()
         } catch (e: IOException) {
+            AiDebugLog.error("http", "✗ network error: $url", e)
             throw AiException("provider-এ পৌঁছানো যাচ্ছে না — internet ও base URL দেখো।")
         }
         response.use {
+            val elapsed = System.currentTimeMillis() - startedAt
             val text = it.body?.string().orEmpty()
-            if (!it.isSuccessful) throw AiException(friendlyHttp(it.code, text))
+            if (!it.isSuccessful) {
+                AiDebugLog.warn(
+                    "http",
+                    "← HTTP ${it.code} in ${elapsed}ms ($url)",
+                    details = text.take(800),
+                )
+                throw AiException(friendlyHttp(it.code, text))
+            }
             val models = runCatching { json.decodeFromString(ModelsResponse.serializer(), text) }
                 .getOrNull()
-            return models?.data?.map { it.id }?.filter { it.isNotBlank() }.orEmpty()
+                ?.data
+                ?.map { m -> m.id }
+                ?.filter { m -> m.isNotBlank() }
+                .orEmpty()
+            AiDebugLog.ok(
+                "http",
+                "← HTTP 200 in ${elapsed}ms · ${models.size} models",
+                details = models.take(15).joinToString("\n"),
+            )
+            return models
         }
     }
 
@@ -96,16 +164,23 @@ class ProviderChatClient(
                 ?: (obj?.get("message") as? JsonPrimitive)?.contentOrNull
         }.getOrNull()
         val hint = message?.lowercase() ?: ""
-        return when {
+        val base = when {
             code == 401 || code == 403 ->
                 "API key মেনে নেওয়া হয়নি — provider-এর dashboard থেকে আবার copy করো।"
+            code == 402 ->
+                "Provider-এ ক্রেডিট নেই (402) — \":free\" model বেছে নাও বা ক্রেডিট যোগ করো।"
             code == 404 ->
                 "Endpoint পাওয়া যায়নি — base URL দেখো ($baseUrl)।"
             code == 429 || hint.contains("rate limit") || hint.contains("quota") ->
-                "এই model-এর ফ্রি limit/quota শেষ — একটু পরে চেষ্টা করো বা অন্য model দাও।"
-            hint.contains("model") && hint.contains("not") ->
+                "Rate limit/quota শেষ (HTTP 429) — একটু পরে আবার চেষ্টা করো, বা ⚙ এ fallback model যোগ করো।"
+            hint.contains("model") && (hint.contains("not") || hint.contains("invalid") || hint.contains("no endpoints")) ->
                 "Model id চেনা যায়নি — \"Models লোড করো\" থেকে ঠিক id বেছে নাও।"
-            else -> message?.takeIf { it.isNotBlank() } ?: "provider error (HTTP $code)।"
+            else -> "provider error (HTTP $code)।"
+        }
+        return if (!message.isNullOrBlank() && !base.contains(message)) {
+            "$base\n— provider বলছে: $message"
+        } else {
+            base
         }
     }
 

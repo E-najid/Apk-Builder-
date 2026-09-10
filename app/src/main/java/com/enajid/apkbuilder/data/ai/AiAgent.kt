@@ -99,22 +99,44 @@ class AiAgent(private val api: ChatApi, private val project: AgentProjectAccess)
                 ChatRequest(model = model, messages = messages.toList(), tools = tools())
             )
             val choice = response.choices.firstOrNull()
-                ?: return AgentResult(null, step)
+            if (choice == null) {
+                AiDebugLog.error("agent", "provider উত্তরে কোনো choice পাঠায়নি (step ${step + 1})")
+                throw AiException("provider-এর উত্তরে কোনো choice ছিল না — বিস্তারিত 🐞 debug এ।")
+            }
             val assistant = choice.message
-                ?: return AgentResult(null, step)
+            if (assistant == null) {
+                AiDebugLog.error("agent", "provider উত্তরে message খালি (step ${step + 1})")
+                throw AiException("provider-এর উত্তরে message ছিল না — বিস্তারিত 🐞 debug এ।")
+            }
             val toolCalls = assistant.tool_calls.orEmpty()
 
             // Text alongside tool calls is interim narration; text without
             // tool calls is the final answer (no event, returned instead).
             if (toolCalls.isNotEmpty()) {
+                AiDebugLog.info(
+                    "agent",
+                    "step ${step + 1}/$MAX_STEPS: ${toolCalls.size} tool call(s)" +
+                        (assistant.content?.takeIf { it.isNotBlank() }?.let { ", note ${it.length} ch" } ?: ""),
+                )
                 assistant.content?.takeIf { it.isNotBlank() }?.let {
                     onEvent(AgentEvent.AssistantText(it))
                 }
             } else {
-                return AgentResult(
-                    assistant.content?.takeIf { it.isNotBlank() } ?: "Done.",
-                    step + 1,
-                )
+                val final = assistant.content?.takeIf { it.isNotBlank() }
+                if (final == null) {
+                    // Free models sometimes answer tool prompts with an empty
+                    // body — fail loudly instead of pretending "Done.".
+                    AiDebugLog.warn(
+                        "agent",
+                        "model খালি উত্তর দিয়েছে (finish_reason=${choice.finish_reason ?: "null"}) — " +
+                            "সাধারণত মানে এই model-এ tool-calling ঠিকমতো কাজ করে না",
+                    )
+                    throw AiException(
+                        "মডেল খালি উত্তর দিলো — এই model-এ সাধারণত tool/function calling কাজ করে না। " +
+                            "⚙ setup-এ গিয়ে অন্য একটা model দিয়ে দেখো। বিস্তারিত 🐞 debug এ।"
+                    )
+                }
+                return AgentResult(final, step + 1)
             }
 
             messages += ChatMessage(
@@ -132,9 +154,14 @@ class AiAgent(private val api: ChatApi, private val project: AgentProjectAccess)
                     "error: ${e.message ?: e.javaClass.simpleName}"
                 }
                 messages += ChatMessage(role = "tool", content = result, tool_call_id = call.id)
+                AiDebugLog.info(
+                    "agent",
+                    "step ${step + 1}/$MAX_STEPS: ${call.function.name} → ${result.take(120)}",
+                )
             }
             step++
         }
+        AiDebugLog.warn("agent", "ধাপ সীমা ($MAX_STEPS) শেষ — কাজ অসম্পূর্ণ থেমে গেল")
         return AgentResult(null, step)
     }
 

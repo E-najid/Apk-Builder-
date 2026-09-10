@@ -147,7 +147,9 @@ class FallbackChatApiTest {
             api.chat(ChatRequest(model = "m", messages = emptyList()))
             throw AssertionError("expected failure")
         } catch (e: AiException) {
-            assertEquals("b down", e.message)
+            // aggregated report lists every provider's reason
+            assertTrue(e.message!!, e.message!!.contains("a down"))
+            assertTrue(e.message!!, e.message!!.contains("b down"))
         }
     }
 }

@@ -11,6 +11,7 @@ import com.enajid.apkbuilder.data.ProjectsRepository
 import com.enajid.apkbuilder.data.TemplateRenderer
 import com.enajid.apkbuilder.data.ai.AgentEvent
 import com.enajid.apkbuilder.data.ai.AgentProjectAccess
+import com.enajid.apkbuilder.data.ai.AiDebugLog
 import com.enajid.apkbuilder.data.ai.AiProfilesStore
 import com.enajid.apkbuilder.data.ai.ChatMessage
 import com.enajid.apkbuilder.data.ai.FallbackChatApi
@@ -89,6 +90,9 @@ class EditorViewModel(
         val profileTests: Map<Long, ProfileTest> = emptyMap(),
         val pendingInput: String? = null,
         val notice: String? = null,
+        /** Live AI debug log for the 🐞 pane. */
+        val debugEntries: List<AiDebugLog.Entry> = emptyList(),
+        val testRunning: Boolean = false,
     ) {
         val hasCoder: Boolean get() = profiles.any { it.enabled && it.role == ModelRole.CODER }
     }
@@ -394,15 +398,31 @@ class EditorViewModel(
         }
     }
 
+    /** DataStore reads must never crash the app — log and degrade instead. */
+    private suspend fun safeProfiles(): List<ModelProfile> = try {
+        aiStore.profiles()
+    } catch (t: Throwable) {
+        AiDebugLog.error("setup", "model profiles পড়া ব্যর্থ", t)
+        emptyList()
+    }
+
+    private suspend fun safeSkills(): List<Skill> = try {
+        aiStore.skills()
+    } catch (t: Throwable) {
+        AiDebugLog.error("setup", "skills পড়া ব্যর্থ", t)
+        emptyList()
+    }
+
     fun openAgent() {
         viewModelScope.launch {
             _agent.update {
                 it.copy(
                     open = true,
-                    profiles = aiStore.profiles(),
-                    skills = aiStore.skills(),
+                    profiles = safeProfiles(),
+                    skills = safeSkills(),
                 )
             }
+            refreshDebug()
         }
     }
 
@@ -415,15 +435,18 @@ class EditorViewModel(
                 val profile = aiStore.addProfile(providerId, baseUrl, apiKey, model, role)
                 _agent.update {
                     it.copy(
-                        profiles = aiStore.profiles(),
+                        profiles = safeProfiles(),
                         notice = "Model যোগ হয়েছে — টেস্ট চলছে…",
                     )
                 }
                 testProfile(profile)
             } catch (e: CancellationException) {
                 throw e
-            } catch (e: Exception) {
-                _agent.update { it.copy(notice = e.friendlyMessage()) }
+            } catch (t: Throwable) {
+                AiDebugLog.error("setup", "model যোগ করা ব্যর্থ", t)
+                _agent.update { it.copy(notice = t.friendlyMessage()) }
+            } finally {
+                refreshDebug()
             }
         }
     }
@@ -432,34 +455,52 @@ class EditorViewModel(
         viewModelScope.launch {
             try {
                 aiStore.updateProfile(profile)
-                _agent.update { it.copy(profiles = aiStore.profiles()) }
+                _agent.update { it.copy(profiles = safeProfiles()) }
                 testProfile(profile)
             } catch (e: CancellationException) {
                 throw e
-            } catch (e: Exception) {
-                _agent.update { it.copy(notice = e.friendlyMessage()) }
+            } catch (t: Throwable) {
+                AiDebugLog.error("setup", "model edit ব্যর্থ", t)
+                _agent.update { it.copy(notice = t.friendlyMessage()) }
+            } finally {
+                refreshDebug()
             }
         }
     }
 
     fun deleteProfile(id: Long) {
         viewModelScope.launch {
-            aiStore.deleteProfile(id)
-            _agent.update { it.copy(profiles = aiStore.profiles()) }
+            try {
+                aiStore.deleteProfile(id)
+            } catch (t: Throwable) {
+                AiDebugLog.error("setup", "model মুছতে ব্যর্থ", t)
+            }
+            _agent.update { it.copy(profiles = safeProfiles()) }
+            refreshDebug()
         }
     }
 
     fun setProfileEnabled(id: Long, enabled: Boolean) {
         viewModelScope.launch {
-            aiStore.setProfileEnabled(id, enabled)
-            _agent.update { it.copy(profiles = aiStore.profiles()) }
+            try {
+                aiStore.setProfileEnabled(id, enabled)
+            } catch (t: Throwable) {
+                AiDebugLog.error("setup", "model toggle ব্যর্থ", t)
+            }
+            _agent.update { it.copy(profiles = safeProfiles()) }
+            refreshDebug()
         }
     }
 
     fun setRole(id: Long, role: ModelRole) {
         viewModelScope.launch {
-            aiStore.setRole(id, role)
-            _agent.update { it.copy(profiles = aiStore.profiles()) }
+            try {
+                aiStore.setRole(id, role)
+            } catch (t: Throwable) {
+                AiDebugLog.error("setup", "role বদলাতে ব্যর্থ", t)
+            }
+            _agent.update { it.copy(profiles = safeProfiles()) }
+            refreshDebug()
         }
     }
 
@@ -478,8 +519,11 @@ class EditorViewModel(
                 }
             } catch (e: CancellationException) {
                 throw e
-            } catch (e: Exception) {
-                _agent.update { it.copy(modelsLoading = false, notice = e.friendlyMessage()) }
+            } catch (t: Throwable) {
+                AiDebugLog.error("setup", "models লোড ব্যর্থ", t)
+                _agent.update { it.copy(modelsLoading = false, notice = t.friendlyMessage()) }
+            } finally {
+                refreshDebug()
             }
         }
     }
@@ -501,8 +545,9 @@ class EditorViewModel(
             }
         } catch (e: CancellationException) {
             throw e
-        } catch (e: Exception) {
-            ProfileTest(ok = false, message = e.friendlyMessage())
+        } catch (t: Throwable) {
+            AiDebugLog.error("setup", "টেস্ট ব্যর্থ: ${profile.summary}", t)
+            ProfileTest(ok = false, message = t.friendlyMessage())
         }
         _agent.update {
             it.copy(
@@ -517,26 +562,97 @@ class EditorViewModel(
         viewModelScope.launch {
             try {
                 aiStore.addSkill(name, instructions)
-                _agent.update { it.copy(skills = aiStore.skills(), notice = "Skill যোগ হয়েছে") }
-            } catch (e: Exception) {
-                _agent.update { it.copy(notice = e.friendlyMessage()) }
+                _agent.update { it.copy(skills = safeSkills(), notice = "Skill যোগ হয়েছে") }
+            } catch (t: Throwable) {
+                AiDebugLog.error("setup", "skill যোগ করা ব্যর্থ", t)
+                _agent.update { it.copy(notice = t.friendlyMessage()) }
             }
         }
     }
 
     fun toggleSkill(id: Long) {
         viewModelScope.launch {
-            aiStore.toggleSkill(id)
-            _agent.update { it.copy(skills = aiStore.skills()) }
+            try {
+                aiStore.toggleSkill(id)
+            } catch (t: Throwable) {
+                AiDebugLog.error("setup", "skill toggle ব্যর্থ", t)
+            }
+            _agent.update { it.copy(skills = safeSkills()) }
         }
     }
 
     fun deleteSkill(id: Long) {
         viewModelScope.launch {
-            aiStore.deleteSkill(id)
-            _agent.update { it.copy(skills = aiStore.skills()) }
+            try {
+                aiStore.deleteSkill(id)
+            } catch (t: Throwable) {
+                AiDebugLog.error("setup", "skill মুছতে ব্যর্থ", t)
+            }
+            _agent.update { it.copy(skills = safeSkills()) }
         }
     }
+
+    // -------------------------------------------------------------- debug --
+
+    /** Copies the current AI debug log into the UI state (🐞 pane). */
+    fun refreshDebug() {
+        _agent.update { it.copy(debugEntries = AiDebugLog.snapshot()) }
+    }
+
+    fun clearDebug() {
+        AiDebugLog.clear()
+        refreshDebug()
+    }
+
+    /**
+     * End-to-end connection check for the 🐞 pane: hits /models, then sends
+     * one tiny chat message (no tools). Every step is visible in the log.
+     */
+    fun testCoderConnection() {
+        val coder = _agent.value.profiles.firstOrNull { it.enabled && it.role == ModelRole.CODER }
+            ?: _agent.value.profiles.firstOrNull { it.enabled }
+        if (coder == null) {
+            _agent.update { it.copy(notice = "আগে ⚙ setup-এ একটা model যোগ করো") }
+            return
+        }
+        viewModelScope.launch {
+            _agent.update { it.copy(testRunning = true) }
+            AiDebugLog.info("test", "টেস্ট শুরু: ${coder.summary}")
+            try {
+                val client = ProviderChatClient(coder)
+                val models = client.listModels()
+                val response = client.chat(
+                    ChatRequest(
+                        model = coder.model,
+                        messages = listOf(
+                            ChatMessage(role = "user", content = "Reply with exactly: OK")
+                        ),
+                    )
+                )
+                val text = response.choices.firstOrNull()?.message?.content
+                if (text.isNullOrBlank()) {
+                    AiDebugLog.error("test", "chat উত্তর এসেছে কিন্তু content খালি — model টা কাজ করছে না")
+                    _agent.update {
+                        it.copy(testRunning = false, notice = "Chat খালি উত্তর দিলো — বিস্তারিত 🐞 এ")
+                    }
+                } else {
+                    AiDebugLog.ok("test", "সংযোগ সম্পূর্ণ ঠিক ✓ (chat উত্তর: \"${text.take(60)}\")")
+                    _agent.update {
+                        it.copy(testRunning = false, notice = "সংযোগ ঠিক ✓ (${coder.model})")
+                    }
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (t: Throwable) {
+                AiDebugLog.error("test", "টেস্ট ব্যর্থ", t)
+                _agent.update { it.copy(testRunning = false, notice = "টেস্ট ব্যর্থ: ${t.friendlyMessage()}") }
+            } finally {
+                refreshDebug()
+            }
+        }
+    }
+
+    // -------------------------------------------------------------- chat --
 
     /**
      * Opens the agent with a build-failure prompt (from the "Fix with AI"
@@ -545,12 +661,12 @@ class EditorViewModel(
      */
     fun seedAgentInput(prompt: String) {
         viewModelScope.launch {
-            val profiles = aiStore.profiles()
+            val profiles = safeProfiles()
             _agent.update {
                 it.copy(
                     open = true,
                     profiles = profiles,
-                    skills = aiStore.skills(),
+                    skills = safeSkills(),
                 )
             }
             if (profiles.any { it.enabled && it.role == ModelRole.CODER }) {
@@ -583,12 +699,16 @@ class EditorViewModel(
             _agent.update {
                 it.copy(busy = true, messages = it.messages + bubble(fromUser = true, text = text))
             }
+            AiDebugLog.info("chat", "message পাঠানো হলো (${text.length} chars), coder=${coder.summary}")
             try {
                 val reviewer = enabled.firstOrNull { it.role == ModelRole.REVIEWER }
                 val fallbacks = enabled.filter { it.role == ModelRole.FALLBACK }
                 // The chat chain: coder first, then reviewer, then fallbacks.
                 val chain = listOfNotNull(coder, reviewer) + fallbacks
-                val chat = FallbackChatApi(chain.map { ProviderChatClient(it) })
+                val chat = FallbackChatApi(
+                    clients = chain.map { ProviderChatClient(it) },
+                    labels = chain.map { it.summary },
+                )
                 val agent = MultiModelAgent(
                     chat = chat,
                     reviewer = reviewer?.let { ProviderChatClient(it) },
@@ -617,6 +737,7 @@ class EditorViewModel(
                     agentHistory += ChatMessage(role = "user", content = text)
                     agentHistory += ChatMessage(role = "assistant", content = finalText)
                 }
+                AiDebugLog.ok("chat", "কাজ শেষ (${result.steps} steps)")
                 _agent.update {
                     it.copy(
                         busy = false,
@@ -632,13 +753,16 @@ class EditorViewModel(
                         messages = it.messages + bubble(false, "থামানো হলো", AgentBubble.Kind.TOOL),
                     )
                 }
-            } catch (e: Exception) {
+            } catch (t: Throwable) {
+                AiDebugLog.error("chat", "কাজ ব্যর্থ হয়েছে", t)
                 _agent.update {
                     it.copy(
                         busy = false,
-                        messages = it.messages + bubble(false, e.friendlyMessage(), AgentBubble.Kind.ERROR),
+                        messages = it.messages + bubble(false, t.friendlyMessage(), AgentBubble.Kind.ERROR),
                     )
                 }
+            } finally {
+                refreshDebug()
             }
         }
     }
@@ -661,7 +785,7 @@ class EditorViewModel(
             }
         }.getOrNull()?.also { gradleInfo = it }
 
-        val skills = aiStore.skills().filter { it.enabled && it.instructions.isNotBlank() }
+        val skills = safeSkills().filter { it.enabled && it.instructions.isNotBlank() }
 
         return buildString {
             appendLine("You are an expert Android coding agent working inside APK Builder, an on-device IDE.")

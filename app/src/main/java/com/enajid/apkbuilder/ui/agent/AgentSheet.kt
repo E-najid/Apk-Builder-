@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -22,10 +23,12 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.Send
 import androidx.compose.material.icons.rounded.Add
+import androidx.compose.material.icons.rounded.BugReport
 import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.ContentCopy
 import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material.icons.rounded.Edit
+import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material.icons.rounded.SmartToy
 import androidx.compose.material.icons.rounded.Stop
@@ -58,12 +61,14 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.enajid.apkbuilder.data.ai.AiDebugLog
 import com.enajid.apkbuilder.data.ai.ModelProfile
 import com.enajid.apkbuilder.data.ai.ModelRole
 import com.enajid.apkbuilder.data.ai.ProviderPresets
@@ -92,6 +97,7 @@ fun AgentSheet(
 
     var input by remember { mutableStateOf("") }
     var showSetup by remember { mutableStateOf(!state.hasCoder) }
+    var showDebug by remember { mutableStateOf(false) }
     var editProfile by remember { mutableStateOf<ModelProfile?>(null) }
     var addProfileDialog by remember { mutableStateOf(false) }
     var deleteProfileTarget by remember { mutableStateOf<ModelProfile?>(null) }
@@ -137,6 +143,15 @@ fun AgentSheet(
                     Text("AI Agent", style = MaterialTheme.typography.titleMedium)
                     ModelsSummaryLine(state)
                 }
+                IconButton(onClick = { showDebug = !showDebug }) {
+                    Icon(
+                        Icons.Rounded.BugReport,
+                        contentDescription = "AI debug log",
+                        tint = if (showDebug) MaterialTheme.colorScheme.primary else {
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                        },
+                    )
+                }
                 IconButton(onClick = { showSetup = !showSetup }) {
                     Icon(Icons.Rounded.Settings, contentDescription = "AI settings")
                 }
@@ -151,8 +166,15 @@ fun AgentSheet(
                 )
             }
 
-            if (showSetup) {
-                AgentSetupContent(
+            when {
+                showDebug -> DebugContent(
+                    state = state,
+                    modifier = Modifier.weight(1f),
+                    onTest = { viewModel.testCoderConnection() },
+                    onClear = { viewModel.clearDebug() },
+                    onRefresh = { viewModel.refreshDebug() },
+                )
+                showSetup -> AgentSetupContent(
                     state = state,
                     modifier = Modifier.weight(1f),
                     onAddProfile = { addProfileDialog = true },
@@ -164,7 +186,7 @@ fun AgentSheet(
                     onToggleSkill = { viewModel.toggleSkill(it) },
                     onDeleteSkill = { deleteSkillTarget = it },
                 )
-            } else {
+                else -> {
                 // ---- messages ----
                 val listState = rememberLazyListState()
                 LaunchedEffect(state.messages.size, state.busy) {
@@ -229,6 +251,7 @@ fun AgentSheet(
                             Icon(Icons.AutoMirrored.Rounded.Send, contentDescription = "Send")
                         }
                     }
+                }
                 }
             }
         }
@@ -868,4 +891,110 @@ private fun SkillDialog(
             TextButton(onClick = onDismiss) { Text("না") }
         },
     )
+}
+
+// ------------------------------------------------------------------ debug --
+
+/**
+ * The 🐞 pane: every AI HTTP exchange, agent step, fallback and error, with
+ * a one-tap end-to-end connection test. Built so a user can copy the log and
+ * paste it into a bug report.
+ */
+@Composable
+private fun DebugContent(
+    state: EditorViewModel.AgentUiState,
+    modifier: Modifier = Modifier,
+    onTest: () -> Unit,
+    onClear: () -> Unit,
+    onRefresh: () -> Unit,
+) {
+    val clipboard = LocalClipboardManager.current
+
+    LaunchedEffect(Unit) { onRefresh() }
+
+    Column(modifier.fillMaxWidth()) {
+        Text(
+            "প্রতিটা AI request/response, agent step আর error এখানে লগ হয় " +
+                "(API key কখনো পুরোটা দেখানো হয় না)। সমস্যা হলে এই লগ copy করে রিপোর্ট করো।",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Spacer(Modifier.height(8.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            FilledTonalButton(
+                onClick = onTest,
+                enabled = !state.testRunning && state.profiles.any { it.enabled },
+                modifier = Modifier.weight(1f),
+            ) {
+                if (state.testRunning) {
+                    CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 2.dp)
+                } else {
+                    Icon(Icons.Rounded.PlayArrow, contentDescription = null, modifier = Modifier.size(16.dp))
+                }
+                Spacer(Modifier.width(6.dp))
+                Text("টেস্ট")
+            }
+            OutlinedButton(
+                onClick = {
+                    clipboard.setText(AnnotatedString(AiDebugLog.shareText()))
+                },
+                modifier = Modifier.weight(1f),
+            ) {
+                Icon(Icons.Rounded.ContentCopy, contentDescription = null, modifier = Modifier.size(16.dp))
+                Spacer(Modifier.width(6.dp))
+                Text("Copy")
+            }
+            OutlinedButton(onClick = onClear) {
+                Text("Clear")
+            }
+        }
+        Spacer(Modifier.height(8.dp))
+
+        val entries = state.debugEntries
+        if (entries.isEmpty()) {
+            Text(
+                "কোনো লগ নেই — টেস্ট চাপো বা agent-কে কিছু কাজ দাও।",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        } else {
+            LazyColumn(
+                Modifier
+                    .weight(1f)
+                    .fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                itemsIndexed(entries.asReversed(), key = { i, e -> "${e.timeMs}-$i-${e.message.hashCode()}" }) { _, entry ->
+                    Column {
+                        Text(
+                            "[${AiDebugLog.formatTime(entry.timeMs)}] ${entry.level}/${entry.event}",
+                            style = MaterialTheme.typography.labelSmall,
+                            fontFamily = FontFamily.Monospace,
+                            color = when (entry.level) {
+                                AiDebugLog.Level.ERROR, AiDebugLog.Level.FATAL ->
+                                    MaterialTheme.colorScheme.error
+                                AiDebugLog.Level.OK -> MaterialTheme.colorScheme.tertiary
+                                AiDebugLog.Level.WARN -> MaterialTheme.colorScheme.secondary
+                                AiDebugLog.Level.INFO -> MaterialTheme.colorScheme.onSurfaceVariant
+                            },
+                        )
+                        Text(
+                            entry.message,
+                            style = MaterialTheme.typography.labelSmall,
+                            fontFamily = FontFamily.Monospace,
+                            color = MaterialTheme.colorScheme.onSurface,
+                        )
+                        entry.details?.let { details ->
+                            Text(
+                                details.take(700),
+                                style = MaterialTheme.typography.labelSmall,
+                                fontFamily = FontFamily.Monospace,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
 }

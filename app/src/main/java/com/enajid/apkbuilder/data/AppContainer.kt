@@ -2,6 +2,7 @@ package com.enajid.apkbuilder.data
 
 import android.content.Context
 import android.os.SystemClock
+import com.enajid.apkbuilder.data.ai.AiDebugLog
 import com.enajid.apkbuilder.data.ai.AiProfilesStore
 import kotlinx.serialization.json.Json
 import okhttp3.MediaType.Companion.toMediaType
@@ -17,6 +18,11 @@ import java.util.concurrent.TimeUnit
  * there is no backend server of our own anywhere in this app.
  */
 class AppContainer(context: Context) {
+
+    init {
+        // AI debug helper: persistent log tail + crash capture (see AiDebugLog).
+        AiDebugLog.attach(context)
+    }
 
     val tokenStore = TokenStore(context)
     val localProjectStore = LocalProjectStore(context)

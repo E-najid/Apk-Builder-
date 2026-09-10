@@ -5,9 +5,13 @@ import kotlinx.coroutines.CancellationException
 /**
  * ChatApi wrapper that tries several providers in order and sticks with the
  * first one that answers. This is what makes free tiers usable: when a model
- * hits its rate limit, the next one takes over transparently.
+ * hits its rate limit, the next one takes over transparently. Every attempt
+ * (success or failure) is recorded in [AiDebugLog].
  */
-class FallbackChatApi(private val clients: List<ChatApi>) : ChatApi {
+class FallbackChatApi(
+    private val clients: List<ChatApi>,
+    private val labels: List<String> = emptyList(),
+) : ChatApi {
 
     private var preferred = 0
 
@@ -15,21 +19,33 @@ class FallbackChatApi(private val clients: List<ChatApi>) : ChatApi {
         require(clients.isNotEmpty()) { "at least one client required" }
     }
 
+    private fun label(index: Int) = labels.getOrNull(index) ?: "provider ${index + 1}"
+
     override suspend fun chat(request: ChatRequest): ChatResponse {
-        var last: Exception? = null
+        val failures = mutableListOf<String>()
         for (offset in clients.indices) {
             val index = (preferred + offset) % clients.size
             try {
                 val response = clients[index].chat(request)
+                if (offset > 0) {
+                    AiDebugLog.warn("fallback", "${label(index)} fallback হিসেবে কাজ করছে ✓")
+                }
                 preferred = index
                 return response
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                last = e
+                failures += "${label(index)}: ${e.message}"
+                AiDebugLog.warn(
+                    "fallback",
+                    "${label(index)} ব্যর্থ — পরের model-এ যাওয়া হচ্ছে…",
+                    details = e.message,
+                )
             }
         }
-        throw last ?: IllegalStateException("no providers configured")
+        val summary = failures.joinToString("\n")
+        AiDebugLog.error("fallback", "সব model ব্যর্থ (${clients.size}টা চেষ্টা হয়েছে)")
+        throw AiException("সব model ব্যর্থ:\n$summary")
     }
 }
 
