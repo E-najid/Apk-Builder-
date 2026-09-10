@@ -1,9 +1,6 @@
 package com.enajid.apkbuilder.ui.editor
 
 import android.app.Application
-import android.content.Context
-import android.content.Intent
-import androidx.core.content.ContextCompat
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.viewModelScope
@@ -13,19 +10,20 @@ import com.enajid.apkbuilder.data.LocalProjectStore
 import com.enajid.apkbuilder.data.ProjectsRepository
 import com.enajid.apkbuilder.data.TemplateRenderer
 import com.enajid.apkbuilder.data.ai.AgentEvent
-import com.enajid.apkbuilder.data.ai.AiConfig
 import com.enajid.apkbuilder.data.ai.AgentProjectAccess
-import com.enajid.apkbuilder.data.ai.AiAgent
-import com.enajid.apkbuilder.data.ai.AiSettingsStore
+import com.enajid.apkbuilder.data.ai.AiProfilesStore
 import com.enajid.apkbuilder.data.ai.ChatMessage
-import com.enajid.apkbuilder.data.ai.OmniRouteClient
-import com.enajid.apkbuilder.data.ai.OmniRouteStatus
+import com.enajid.apkbuilder.data.ai.FallbackChatApi
+import com.enajid.apkbuilder.data.ai.ModelProfile
+import com.enajid.apkbuilder.data.ai.ModelRole
+import com.enajid.apkbuilder.data.ai.MultiModelAgent
+import com.enajid.apkbuilder.data.ai.ProviderChatClient
+import com.enajid.apkbuilder.data.ai.Skill
 import com.enajid.apkbuilder.data.friendlyMessage
 import com.enajid.apkbuilder.domain.ProjectFiles
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
@@ -74,27 +72,31 @@ class EditorViewModel(
         enum class Kind { TEXT, TOOL, ERROR }
     }
 
+    /** Result of the last "save & test" call for a profile (in-memory only). */
+    data class ProfileTest(val ok: Boolean = false, val message: String = "")
+
     data class AgentUiState(
         val open: Boolean = false,
-        val hasKey: Boolean = false,
-        val baseUrl: String = "",
-        val model: String = "",
-        val checking: Boolean = false,
-        /** null = unknown, true = OmniRoute reachable, false = down. */
-        val reachable: Boolean? = null,
+        val profiles: List<ModelProfile> = emptyList(),
+        val skills: List<Skill> = emptyList(),
         val messages: List<AgentBubble> = emptyList(),
         val busy: Boolean = false,
+        /** Model ids loaded for the add/edit dialog. */
         val models: List<String> = emptyList(),
+        val modelsLoading: Boolean = false,
+        val testingProfileId: Long? = null,
+        val profileTests: Map<Long, ProfileTest> = emptyMap(),
         val pendingInput: String? = null,
         val notice: String? = null,
-    )
+    ) {
+        val hasCoder: Boolean get() = profiles.any { it.enabled && it.role == ModelRole.CODER }
+    }
 
     private val container = (application as ApkBuilderApp).container
     private val git: GitRepository = container.gitRepository
     private val projects: ProjectsRepository = container.projectsRepository
     private val localStore: LocalProjectStore = container.localProjectStore
-    private val aiSettings: AiSettingsStore = container.aiSettings
-    private val omniRoute: OmniRouteClient = container.omniRouteClient
+    private val aiStore: AiProfilesStore = container.aiProfilesStore
 
     private val owner: String = savedStateHandle.get<String>("owner") ?: ""
     private val repo: String = savedStateHandle.get<String>("repo") ?: ""
@@ -393,59 +395,30 @@ class EditorViewModel(
 
     fun openAgent() {
         viewModelScope.launch {
-            val config = aiSettings.current()
             _agent.update {
                 it.copy(
                     open = true,
-                    hasKey = config.hasKey,
-                    baseUrl = config.baseUrl,
-                    model = config.model,
-                    checking = true,
+                    profiles = aiStore.profiles(),
+                    skills = aiStore.skills(),
                 )
             }
-            refreshAgentStatus()
         }
     }
 
     fun closeAgent() = _agent.update { it.copy(open = false) }
 
-    fun refreshAgentStatus() {
+    /** Saves a new model profile, then immediately verifies it with /models. */
+    fun addProfile(providerId: String, baseUrl: String, apiKey: String, model: String, role: ModelRole) {
         viewModelScope.launch {
             try {
-                _agent.update { it.copy(checking = true) }
-                val reachable = omniRoute.ping() == OmniRouteStatus.RUNNING
-                _agent.update { it.copy(checking = false, reachable = reachable) }
-            } catch (e: Exception) {
-                _agent.update { it.copy(checking = false, reachable = false) }
-            }
-        }
-    }
-
-    /** Saves the OmniRoute connection settings, then pings + tests the key. */
-    fun saveAgentConfig(apiKey: String, baseUrl: String, model: String) {
-        viewModelScope.launch {
-            try {
-                aiSettings.save(apiKey, baseUrl, model)
-                val hasKey = apiKey.isNotBlank()
-                val reachable = omniRoute.ping() == OmniRouteStatus.RUNNING
-                var notice = "সেভ হয়েছে"
-                if (hasKey && reachable) {
-                    val models = runCatching { omniRoute.listModels() }.getOrDefault(emptyList())
-                    if (models.isNotEmpty()) {
-                        notice = "API key কাজ করছে ✓ (${models.size} models)"
-                    }
-                } else if (hasKey) {
-                    notice = "সেভ হয়েছে, কিন্তু OmniRoute চালু নেই — Termux-এ omniroute চালাও"
-                }
+                val profile = aiStore.addProfile(providerId, baseUrl, apiKey, model, role)
                 _agent.update {
                     it.copy(
-                        hasKey = hasKey,
-                        baseUrl = baseUrl,
-                        model = model,
-                        reachable = reachable,
-                        notice = notice,
+                        profiles = aiStore.profiles(),
+                        notice = "Model যোগ হয়েছে — টেস্ট চলছে…",
                     )
                 }
+                testProfile(profile)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -454,12 +427,50 @@ class EditorViewModel(
         }
     }
 
-    fun loadAgentModels() {
+    fun updateProfile(profile: ModelProfile) {
         viewModelScope.launch {
             try {
-                val models = omniRoute.listModels()
+                aiStore.updateProfile(profile)
+                _agent.update { it.copy(profiles = aiStore.profiles()) }
+                testProfile(profile)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                _agent.update { it.copy(notice = e.friendlyMessage()) }
+            }
+        }
+    }
+
+    fun deleteProfile(id: Long) {
+        viewModelScope.launch {
+            aiStore.deleteProfile(id)
+            _agent.update { it.copy(profiles = aiStore.profiles()) }
+        }
+    }
+
+    fun setProfileEnabled(id: Long, enabled: Boolean) {
+        viewModelScope.launch {
+            aiStore.setProfileEnabled(id, enabled)
+            _agent.update { it.copy(profiles = aiStore.profiles()) }
+        }
+    }
+
+    fun setRole(id: Long, role: ModelRole) {
+        viewModelScope.launch {
+            aiStore.setRole(id, role)
+            _agent.update { it.copy(profiles = aiStore.profiles()) }
+        }
+    }
+
+    /** Loads the provider's model list for the add/edit dialog. */
+    fun loadModels(baseUrl: String, apiKey: String) {
+        viewModelScope.launch {
+            try {
+                _agent.update { it.copy(modelsLoading = true) }
+                val models = ProviderChatClient(baseUrl, apiKey).listModels()
                 _agent.update {
                     it.copy(
+                        modelsLoading = false,
                         models = models,
                         notice = if (models.isEmpty()) "কোনো model পাওয়া যায়নি" else "${models.size} models লোড হয়েছে",
                     )
@@ -467,74 +478,81 @@ class EditorViewModel(
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                _agent.update { it.copy(notice = e.friendlyMessage()) }
+                _agent.update { it.copy(modelsLoading = false, notice = e.friendlyMessage()) }
             }
         }
     }
 
-    fun setAgentModel(model: String) {
+    fun clearLoadedModels() = _agent.update { it.copy(models = emptyList()) }
+
+    private suspend fun testProfile(profile: ModelProfile) {
+        _agent.update { it.copy(testingProfileId = profile.id, profileTests = it.profileTests - profile.id) }
+        val result = try {
+            val models = ProviderChatClient(profile.baseUrl, profile.apiKey).listModels()
+            when {
+                models.isEmpty() -> ProfileTest(ok = true, message = "সংযোগ ঠিক, কিন্তু model list খালি")
+                models.contains(profile.model) ->
+                    ProfileTest(ok = true, message = "কাজ করছে ✓ (${models.size} models)")
+                else -> ProfileTest(
+                    ok = true,
+                    message = "সংযোগ ঠিক ✓ — কিন্তু \"${profile.model}\" list-এ নেই, id যাচাই করো",
+                )
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            ProfileTest(ok = false, message = e.friendlyMessage())
+        }
+        _agent.update {
+            it.copy(
+                testingProfileId = null,
+                profileTests = it.profileTests + (profile.id to result),
+                notice = if (result.ok) result.message else "টেস্ট ব্যর্থ: ${result.message}",
+            )
+        }
+    }
+
+    fun addSkill(name: String, instructions: String) {
         viewModelScope.launch {
             try {
-                val config = aiSettings.current()
-                aiSettings.save(config.apiKey, config.baseUrl, model)
-                _agent.update { it.copy(model = model, notice = "Model সেভ হয়েছে: $model") }
+                aiStore.addSkill(name, instructions)
+                _agent.update { it.copy(skills = aiStore.skills(), notice = "Skill যোগ হয়েছে") }
             } catch (e: Exception) {
                 _agent.update { it.copy(notice = e.friendlyMessage()) }
             }
         }
     }
 
-    /**
-     * Starts OmniRoute in Termux via the RUN_COMMAND intent when the user has
-     * granted it; otherwise just opens Termux with instructions.
-     */
-    fun runOmniRoute(hasPermission: Boolean) {
-        val context: Context = getApplication()
-        if (hasPermission) {
-            try {
-                val intent = Intent("com.termux.RUN_COMMAND").apply {
-                    setClassName("com.termux", "com.termux.app.RunCommandService")
-                    putExtra("com.termux.RUN_COMMAND_PATH", "/data/data/com.termux/files/usr/bin/omniroute")
-                    putExtra("com.termux.RUN_COMMAND_ARGUMENTS", arrayOf<String>())
-                    putExtra("com.termux.RUN_COMMAND_BACKGROUND", true)
-                }
-                ContextCompat.startForegroundService(context, intent)
-                _agent.update { it.copy(notice = "OmniRoute চালু করা হলো… কয়েক সেকেন্ড পর ↻ চাপো") }
-                viewModelScope.launch {
-                    delay(5000)
-                    refreshAgentStatus()
-                }
-                return
-            } catch (e: Exception) {
-                // fall through to the manual fallback below
-            }
+    fun toggleSkill(id: Long) {
+        viewModelScope.launch {
+            aiStore.toggleSkill(id)
+            _agent.update { it.copy(skills = aiStore.skills()) }
         }
-        val launch = context.packageManager.getLaunchIntentForPackage("com.termux")
-        if (launch != null) {
-            context.startActivity(launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-            _agent.update { it.copy(notice = "Termux খুলে omniroute লিখে Enter দাও, তারপর ফিরে এসো") }
-        } else {
-            _agent.update { it.copy(notice = "Termux install করো আগে (সেটআপের ধাপ ১)") }
+    }
+
+    fun deleteSkill(id: Long) {
+        viewModelScope.launch {
+            aiStore.deleteSkill(id)
+            _agent.update { it.copy(skills = aiStore.skills()) }
         }
     }
 
     /**
      * Opens the agent with a build-failure prompt (from the "Fix with AI"
-     * button). When a key is already configured, the fix starts right away;
+     * button). With a coder model configured, the fix starts right away;
      * otherwise the sheet opens on the setup screen with the prompt queued.
      */
     fun seedAgentInput(prompt: String) {
         viewModelScope.launch {
-            val config = aiSettings.current()
+            val profiles = aiStore.profiles()
             _agent.update {
                 it.copy(
                     open = true,
-                    hasKey = config.hasKey,
-                    baseUrl = config.baseUrl,
-                    model = config.model,
+                    profiles = profiles,
+                    skills = aiStore.skills(),
                 )
             }
-            if (config.hasKey) {
+            if (profiles.any { it.enabled && it.role == ModelRole.CODER }) {
                 sendAgentMessage(prompt, _state.value.selectedPath, null)
             } else {
                 _agent.update { it.copy(pendingInput = prompt) }
@@ -553,8 +571,10 @@ class EditorViewModel(
     fun sendAgentMessage(message: String, selectedPath: String?, selectedCode: String?) {
         val text = message.trim()
         if (text.isEmpty() || _agent.value.busy) return
-        if (!_agent.value.hasKey) {
-            _agent.update { it.copy(notice = "আগে API key সেট করো (⚙ সেটিংস)") }
+        val enabled = _agent.value.profiles.filter { it.enabled }
+        val coder = enabled.firstOrNull { it.role == ModelRole.CODER }
+        if (coder == null) {
+            _agent.update { it.copy(notice = "আগে ⚙ setup-এ একটা Coder model যোগ করো") }
             return
         }
         agentJob?.cancel()
@@ -563,14 +583,23 @@ class EditorViewModel(
                 it.copy(busy = true, messages = it.messages + bubble(fromUser = true, text = text))
             }
             try {
-                val config = aiSettings.current()
+                val reviewer = enabled.firstOrNull { it.role == ModelRole.REVIEWER }
+                val fallbacks = enabled.filter { it.role == ModelRole.FALLBACK }
+                // The chat chain: coder first, then reviewer, then fallbacks.
+                val chain = listOfNotNull(coder, reviewer) + fallbacks
+                val chat = FallbackChatApi(chain.map { ProviderChatClient(it) })
+                val agent = MultiModelAgent(
+                    chat = chat,
+                    reviewer = reviewer?.let { ProviderChatClient(it) },
+                    reviewerModel = reviewer?.model,
+                )
                 val system = buildSystemPrompt(selectedPath, selectedCode)
-                val agent = AiAgent(omniRoute, projectAccess)
                 val result = agent.run(
-                    model = config.model.ifBlank { AiConfig.DEFAULT_MODEL },
+                    model = coder.model,
                     systemPrompt = system,
                     history = agentHistory.toList(),
                     userMessage = text,
+                    project = projectAccess,
                 ) { event ->
                     when (event) {
                         is AgentEvent.AssistantText -> _agent.update { s ->
@@ -631,6 +660,8 @@ class EditorViewModel(
             }
         }.getOrNull()?.also { gradleInfo = it }
 
+        val skills = aiStore.skills().filter { it.enabled && it.instructions.isNotBlank() }
+
         return buildString {
             appendLine("You are an expert Android coding agent working inside APK Builder, an on-device IDE.")
             append("The project")
@@ -649,6 +680,11 @@ class EditorViewModel(
                 } else {
                     appendLine(".")
                 }
+            }
+            if (skills.isNotEmpty()) {
+                appendLine()
+                appendLine("Skill guides the user enabled — follow them:")
+                skills.forEach { appendLine("- ${it.name}: ${it.instructions}") }
             }
             appendLine()
             appendLine("Rules:")

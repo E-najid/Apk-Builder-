@@ -1,8 +1,6 @@
 package com.enajid.apkbuilder.ui.agent
 
-import android.content.pm.PackageManager
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -17,32 +15,39 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.Send
+import androidx.compose.material.icons.rounded.Add
+import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.ContentCopy
-import androidx.compose.material.icons.rounded.PlayArrow
-import androidx.compose.material.icons.rounded.Refresh
+import androidx.compose.material.icons.rounded.Delete
+import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material.icons.rounded.SmartToy
 import androidx.compose.material.icons.rounded.Stop
+import androidx.compose.material.icons.rounded.Warning
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -55,29 +60,23 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
-import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import com.enajid.apkbuilder.data.ai.AiConfig
+import com.enajid.apkbuilder.data.ai.ModelProfile
+import com.enajid.apkbuilder.data.ai.ModelRole
+import com.enajid.apkbuilder.data.ai.ProviderPresets
+import com.enajid.apkbuilder.data.ai.Skill
 import com.enajid.apkbuilder.ui.editor.EditorViewModel
 import com.enajid.apkbuilder.ui.editor.EditorViewModel.AgentBubble
 import com.enajid.apkbuilder.util.Intents
 import kotlinx.coroutines.delay
 
-private const val TERMUX_RUN_COMMAND_PERMISSION = "com.termux.permission.RUN_COMMAND"
-private const val F_DROID_TERMUX_URL = "https://f-droid.org/en/packages/com.termux/"
-private const val OMNIROUTE_INSTALL_COMMAND =
-    "pkg update && pkg upgrade -y && pkg install nodejs-lts git curl -y && npm install -g omniroute"
-private const val OMNIROUTE_RUN_COMMAND = "omniroute"
-private const val OMNIROUTE_DASHBOARD_URL = "http://localhost:20128"
-
 /**
- * The AI Agent chat: a bottom sheet over the editor. Talks to the OmniRoute
- * gateway the user runs locally in Termux — nothing leaves the phone.
+ * The AI Agent chat: a bottom sheet over the editor. The user brings their
+ * own AI providers (OpenRouter, Groq, Gemini, Cerebras or any custom
+ * OpenAI-compatible URL) — keys live only on the device.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -88,12 +87,16 @@ fun AgentSheet(
     val state by viewModel.agentState.collectAsStateWithLifecycle()
     if (!state.open) return
 
-    val context = LocalContext.current
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val sheetHeight = (LocalConfiguration.current.screenHeightDp * 0.85f).dp
 
     var input by remember { mutableStateOf("") }
-    var showSetup by remember { mutableStateOf(!state.hasKey) }
+    var showSetup by remember { mutableStateOf(!state.hasCoder) }
+    var editProfile by remember { mutableStateOf<ModelProfile?>(null) }
+    var addProfileDialog by remember { mutableStateOf(false) }
+    var deleteProfileTarget by remember { mutableStateOf<ModelProfile?>(null) }
+    var skillDialog by remember { mutableStateOf(false) }
+    var deleteSkillTarget by remember { mutableStateOf<Skill?>(null) }
 
     LaunchedEffect(state.pendingInput) {
         state.pendingInput?.let {
@@ -101,8 +104,8 @@ fun AgentSheet(
             viewModel.consumePendingInput()
         }
     }
-    LaunchedEffect(state.hasKey) {
-        if (state.hasKey) showSetup = false
+    LaunchedEffect(state.hasCoder) {
+        if (!state.hasCoder) showSetup = true
     }
     LaunchedEffect(state.notice) {
         if (state.notice != null) {
@@ -110,10 +113,6 @@ fun AgentSheet(
             viewModel.consumeAgentNotice()
         }
     }
-
-    val runPermission = rememberLauncherForActivityResult(
-        ActivityResultContracts.RequestPermission()
-    ) { granted -> viewModel.runOmniRoute(granted) }
 
     ModalBottomSheet(
         onDismissRequest = { viewModel.closeAgent() },
@@ -134,60 +133,12 @@ fun AgentSheet(
                     tint = MaterialTheme.colorScheme.primary,
                 )
                 Spacer(Modifier.width(8.dp))
-                Text("AI Agent", style = MaterialTheme.typography.titleMedium)
-                Spacer(Modifier.weight(1f))
-                Text(
-                    text = when {
-                        state.checking -> "checking…"
-                        state.reachable == true -> "OmniRoute ✅"
-                        state.reachable == false -> "OmniRoute ⛔"
-                        else -> "OmniRoute"
-                    },
-                    style = MaterialTheme.typography.labelMedium,
-                    color = if (state.reachable == false) {
-                        MaterialTheme.colorScheme.error
-                    } else {
-                        MaterialTheme.colorScheme.onSurfaceVariant
-                    },
-                )
-                IconButton(
-                    onClick = { viewModel.refreshAgentStatus() },
-                    enabled = !state.checking,
-                ) {
-                    Icon(Icons.Rounded.Refresh, contentDescription = "Refresh status")
+                Column(Modifier.weight(1f)) {
+                    Text("AI Agent", style = MaterialTheme.typography.titleMedium)
+                    ModelsSummaryLine(state)
                 }
                 IconButton(onClick = { showSetup = !showSetup }) {
                     Icon(Icons.Rounded.Settings, contentDescription = "AI settings")
-                }
-            }
-
-            if (state.reachable == false && !showSetup) {
-                Row(
-                    Modifier
-                        .fillMaxWidth()
-                        .padding(vertical = 4.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text(
-                        "OmniRoute চালু নেই — Termux-এ চালাও",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.error,
-                        modifier = Modifier.weight(1f),
-                    )
-                    FilledTonalButton(onClick = {
-                        if (ContextCompat.checkSelfPermission(
-                                context, TERMUX_RUN_COMMAND_PERMISSION
-                            ) == PackageManager.PERMISSION_GRANTED
-                        ) {
-                            viewModel.runOmniRoute(true)
-                        } else {
-                            runPermission.launch(TERMUX_RUN_COMMAND_PERMISSION)
-                        }
-                    }) {
-                        Icon(Icons.Rounded.PlayArrow, contentDescription = null, modifier = Modifier.size(16.dp))
-                        Spacer(Modifier.width(4.dp))
-                        Text("Termux-এ চালাও")
-                    }
                 }
             }
 
@@ -204,11 +155,14 @@ fun AgentSheet(
                 AgentSetupContent(
                     state = state,
                     modifier = Modifier.weight(1f),
-                    onSave = { key, baseUrl, model ->
-                        viewModel.saveAgentConfig(key, baseUrl, model)
-                    },
-                    onLoadModels = { viewModel.loadAgentModels() },
-                    onSetModel = { viewModel.setAgentModel(it) },
+                    onAddProfile = { addProfileDialog = true },
+                    onEditProfile = { editProfile = it },
+                    onDeleteProfile = { deleteProfileTarget = it },
+                    onToggleProfile = { id, enabled -> viewModel.setProfileEnabled(id, enabled) },
+                    onSetRole = { id, role -> viewModel.setRole(id, role) },
+                    onAddSkill = { skillDialog = true },
+                    onToggleSkill = { viewModel.toggleSkill(it) },
+                    onDeleteSkill = { deleteSkillTarget = it },
                 )
             } else {
                 // ---- messages ----
@@ -242,13 +196,6 @@ fun AgentSheet(
                         }
                     }
                 }
-                if (state.busy) {
-                    LinearProgressIndicator(
-                        Modifier
-                            .fillMaxWidth()
-                            .padding(vertical = 2.dp)
-                    )
-                }
 
                 // ---- input ----
                 Row(
@@ -277,7 +224,7 @@ fun AgentSheet(
                                 viewModel.sendAgentMessage(input, path, selected)
                                 input = ""
                             },
-                            enabled = input.isNotBlank() && state.hasKey,
+                            enabled = input.isNotBlank() && state.hasCoder,
                         ) {
                             Icon(Icons.AutoMirrored.Rounded.Send, contentDescription = "Send")
                         }
@@ -286,6 +233,110 @@ fun AgentSheet(
             }
         }
     }
+
+    if (addProfileDialog || editProfile != null) {
+        ProfileDialog(
+            state = state,
+            initial = editProfile,
+            onDismiss = {
+                addProfileDialog = false
+                editProfile = null
+                viewModel.clearLoadedModels()
+            },
+            onSave = { providerId, baseUrl, apiKey, model, role ->
+                val editing = editProfile
+                if (editing == null) {
+                    viewModel.addProfile(providerId, baseUrl, apiKey, model, role)
+                } else {
+                    viewModel.updateProfile(
+                        editing.copy(
+                            providerId = providerId,
+                            baseUrl = baseUrl,
+                            apiKey = apiKey.ifBlank { editing.apiKey },
+                            model = model,
+                            role = role,
+                        )
+                    )
+                }
+                addProfileDialog = false
+                editProfile = null
+                viewModel.clearLoadedModels()
+            },
+            onLoadModels = { baseUrl, apiKey -> viewModel.loadModels(baseUrl, apiKey) },
+        )
+    }
+
+    if (skillDialog) {
+        SkillDialog(
+            onDismiss = { skillDialog = false },
+            onSave = { name, instructions ->
+                viewModel.addSkill(name, instructions)
+                skillDialog = false
+            },
+        )
+    }
+
+    deleteProfileTarget?.let { profile ->
+        AlertDialog(
+            onDismissRequest = { deleteProfileTarget = null },
+            title = { Text("Model বাদ দেবে?") },
+            text = { Text("${profile.summary} মুছে ফেলা হবে। আবার যোগ করতে চাইলে key আবার বসাতে হবে।") },
+            confirmButton = {
+                TextButton(onClick = {
+                    viewModel.deleteProfile(profile.id)
+                    deleteProfileTarget = null
+                }) { Text("বাদ দাও") }
+            },
+            dismissButton = {
+                TextButton(onClick = { deleteProfileTarget = null }) { Text("না") }
+            },
+        )
+    }
+
+    deleteSkillTarget?.let { skill ->
+        AlertDialog(
+            onDismissRequest = { deleteSkillTarget = null },
+            title = { Text("Skill বাদ দেবে?") },
+            text = { Text("\"${skill.name}\" মুছে ফেলা হবে।") },
+            confirmButton = {
+                TextButton(onClick = {
+                    viewModel.deleteSkill(skill.id)
+                    deleteSkillTarget = null
+                }) { Text("বাদ দাও") }
+            },
+            dismissButton = {
+                TextButton(onClick = { deleteSkillTarget = null }) { Text("না") }
+            },
+        )
+    }
+}
+
+@Composable
+private fun ModelsSummaryLine(state: EditorViewModel.AgentUiState) {
+    val enabled = state.profiles.filter { it.enabled }
+    val text = when {
+        enabled.isEmpty() -> "কোনো model নেই — ⚙ setup"
+        else -> buildString {
+            enabled.firstOrNull { it.role == ModelRole.CODER }?.let { append("Coder: ${it.model}") }
+            enabled.firstOrNull { it.role == ModelRole.REVIEWER }?.let {
+                if (isNotEmpty()) append(" · ")
+                append("Reviewer: ${it.model}")
+            }
+            enabled.count { it.role == ModelRole.FALLBACK }.let {
+                if (it > 0) {
+                    if (isNotEmpty()) append(" · ")
+                    append("$it fallback")
+                }
+            }
+        }
+    }
+    Text(
+        text,
+        style = MaterialTheme.typography.labelSmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis,
+    )
 }
 
 @Composable
@@ -319,8 +370,6 @@ private fun AgentBubbleRow(bubble: AgentBubble) {
             style = MaterialTheme.typography.labelSmall,
             fontFamily = FontFamily.Monospace,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
-            maxLines = 2,
-            overflow = TextOverflow.Ellipsis,
         )
 
         AgentBubble.Kind.ERROR -> Text(
@@ -337,300 +386,486 @@ private fun AgentBubbleRow(bubble: AgentBubble) {
 private fun AgentSetupContent(
     state: EditorViewModel.AgentUiState,
     modifier: Modifier = Modifier,
-    onSave: (apiKey: String, baseUrl: String, model: String) -> Unit,
-    onLoadModels: () -> Unit,
-    onSetModel: (String) -> Unit,
+    onAddProfile: () -> Unit,
+    onEditProfile: (ModelProfile) -> Unit,
+    onDeleteProfile: (ModelProfile) -> Unit,
+    onToggleProfile: (Long, Boolean) -> Unit,
+    onSetRole: (Long, ModelRole) -> Unit,
+    onAddSkill: () -> Unit,
+    onToggleSkill: (Long) -> Unit,
+    onDeleteSkill: (Skill) -> Unit,
 ) {
-    val clipboard = LocalClipboardManager.current
-    val context = LocalContext.current
-
-    var apiKey by remember { mutableStateOf("") }
-    var baseUrl by remember(state.baseUrl) { mutableStateOf(state.baseUrl) }
-    var model by remember(state.model) { mutableStateOf(state.model) }
-
     LazyColumn(
         modifier
-            .fillMaxWidth(),
+            .fillMaxWidth()
+            .padding(bottom = 12.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         item {
             Text(
-                "AI চলে তোমার ফোনেই — OmniRoute (Termux-এ চলা free AI gateway)। " +
-                    "একবার সেটআপ করলেই হবে:",
+                "নিজের AI provider যোগ করো (OpenRouter, Groq, Gemini, Cerebras…)। " +
+                    "ফ্রি tier বা \":free\" model ব্যবহার করলে পুরোটাই $0। " +
+                    "Coder মূল কোড লেখে, Reviewer একবার দেখে ভুল ধরে, Fallback হলো ব্যাকআপ।",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
+
         item {
-            SetupStep(
-                number = "1",
-                title = "Termux install করো",
-                body = "F-Droid থেকে নাও (Play Store-এর বিল্ড পুরনো):",
-                action = {
-                    OutlinedButton(onClick = { Intents.openUrl(context, F_DROID_TERMUX_URL) }) {
-                        Text("F-Droid খোলো")
-                    }
-                },
-            )
+            Text("Models", style = MaterialTheme.typography.titleSmall)
         }
-        item {
-            SetupStep(
-                number = "2",
-                title = "Termux-এ Node + OmniRoute install করো",
-                body = null,
-                code = OMNIROUTE_INSTALL_COMMAND,
-                clipboard = clipboard,
-            )
-        }
-        item {
-            SetupStep(
-                number = "3",
-                title = "OmniRoute চালাও",
-                body = "নিচের কমান্ডটা দাও, চালু থাকা অবস্থায় এই অ্যাপে ফিরে এসো। স্ক্রিন বন্ধ করলেও " +
-                    "চলতে থাকবে; চাইলে Termux-এর notification থেকে \"Acquire wakelock\" দাও।",
-                code = OMNIROUTE_RUN_COMMAND,
-                secondCode = "mkdir -p ~/.termux && echo allow-external-apps=true >> ~/.termux/termux.properties",
-                secondCodeNote = "\"Termux-এ চালাও\" বাটন ব্যবহার করতে চাইলে একবার এটাও দাও:",
-                clipboard = clipboard,
-            )
-        }
-        item {
-            SetupStep(
-                number = "4",
-                title = "ফ্রি AI provider connect করো (সবচেয়ে জরুরি!)",
-                body = "OmniRoute নিজে AI নয় — এটা gateway, তোমার connect করা AI-কে ডাকে। " +
-                    "ড্যাশবোর্ড → Providers → Add Provider → ফ্রি একটা বেছে নাও: " +
-                    "Kiro AI (ফ্রি Claude), Qwen (unlimited), Qoder বা Pollinations — " +
-                    "OAuth, API key, কার্ড কিছুই লাগে না, শুধু Connect চাপো। " +
-                    "Claude/Codex-এর subscription থাকলে সেগুলো OAuth করলে আরও ভালো model পাবে।",
-                action = {
-                    OutlinedButton(onClick = { Intents.openUrl(context, OMNIROUTE_DASHBOARD_URL) }) {
-                        Text("Providers পেজ খোলো")
-                    }
-                },
-            )
-        }
-        item {
-            SetupStep(
-                number = "5",
-                title = "API key নাও",
-                body = "ব্রাউজারে ড্যাশবোর্ড খোলো → পাসওয়ার্ড (প্রথমবার: ++CHANGEME) দিয়ে লগইন → " +
-                    "সাথে সাথে পাসওয়ার্ড বদলে ফেলো → Endpoint পেজ থেকে API key copy করো।",
-                action = {
-                    OutlinedButton(onClick = { Intents.openUrl(context, OMNIROUTE_DASHBOARD_URL) }) {
-                        Text("ড্যাশবোর্ড খোলো")
-                    }
-                },
-            )
-        }
-        item {
-            SetupStep(
-                number = "6",
-                title = "Key নিচে বসাও",
-                body = null,
-                action = {},
-            )
-        }
-        item {
-            Column {
-                OutlinedTextField(
-                    value = apiKey,
-                    onValueChange = { apiKey = it },
-                    label = { Text("OmniRoute API key") },
-                    placeholder = { Text("or-…") },
-                    singleLine = true,
-                    isError = false,
-                    supportingText = {
-                        if (state.hasKey) {
-                            Text("আগের key সেভ করা আছে — নতুনটা লিখলে বদলে যাবে")
-                        } else {
-                            Text("ড্যাশবোর্ডের Endpoint পেজ থেকে copy করো")
-                        }
-                    },
+
+        if (state.profiles.isEmpty()) {
+            item {
+                Surface(
+                    color = MaterialTheme.colorScheme.surfaceVariant,
+                    shape = RoundedCornerShape(12.dp),
                     modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Column(Modifier.padding(14.dp)) {
+                        Text(
+                            "এখনো কোনো model নেই",
+                            style = MaterialTheme.typography.titleSmall,
+                        )
+                        Text(
+                            "একটা Coder model যোগ করলেই agent চালু হবে।",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+            }
+        } else {
+            items(state.profiles, key = { it.id }) { profile ->
+                ProfileRow(
+                    profile = profile,
+                    test = state.profileTests[profile.id],
+                    testing = state.testingProfileId == profile.id,
+                    onEdit = { onEditProfile(profile) },
+                    onDelete = { onDeleteProfile(profile) },
+                    onToggle = { onToggleProfile(profile.id, it) },
+                    onSetRole = { onSetRole(profile.id, it) },
                 )
-                Spacer(Modifier.height(8.dp))
-                OutlinedTextField(
-                    value = model,
-                    onValueChange = { model = it },
-                    label = { Text("Model") },
-                    singleLine = true,
-                    supportingText = {
-                        Text("ডিফল্ট auto/coding:free — শুধুই ফ্রি model-এ যায়। \"Models লোড করো\" থেকেও বেছে নিতে পারো")
-                    },
-                    modifier = Modifier.fillMaxWidth(),
-                )
-                if (state.models.isNotEmpty()) {
-                    Spacer(Modifier.height(6.dp))
+            }
+        }
+
+        item {
+            FilledTonalButton(onClick = onAddProfile, modifier = Modifier.fillMaxWidth()) {
+                Icon(Icons.Rounded.Add, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.width(6.dp))
+                Text("নতুন model যোগ করো")
+            }
+        }
+
+        item {
+            Text("Skills", style = MaterialTheme.typography.titleSmall)
+            Text(
+                "চালু skill-গুলোর নির্দেশনা agent-এর প্রতি কাজে system prompt-এ যোগ হয়।",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+
+        items(state.skills, key = { it.id }) { skill ->
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 2.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text(skill.name, style = MaterialTheme.typography.bodyMedium)
                     Text(
-                        "লোড হওয়া models:",
+                        skill.instructions,
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
                     )
-                    state.models.take(12).forEach { modelId ->
-                        Text(
-                            modelId,
-                            style = MaterialTheme.typography.labelSmall,
-                            fontFamily = FontFamily.Monospace,
-                            color = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable { model = modelId }
-                                .padding(vertical = 2.dp),
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
+                }
+                if (!skill.builtIn) {
+                    IconButton(onClick = { onDeleteSkill(skill) }, modifier = Modifier.size(32.dp)) {
+                        Icon(
+                            Icons.Rounded.Delete,
+                            contentDescription = "Delete skill",
+                            modifier = Modifier.size(16.dp),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
                 }
-                Spacer(Modifier.height(8.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedButton(
-                        onClick = onLoadModels,
-                        enabled = state.hasKey,
-                        modifier = Modifier.weight(1f),
-                    ) { Text("Models লোড করো") }
-                    OutlinedButton(
-                        onClick = { onSetModel(model) },
-                        enabled = state.hasKey && model.isNotBlank(),
-                        modifier = Modifier.weight(1f),
-                    ) { Text("Model সেভ করো") }
-                }
-                Spacer(Modifier.height(8.dp))
-                OutlinedTextField(
-                    value = baseUrl,
-                    onValueChange = { baseUrl = it },
-                    label = { Text("Base URL (অ্যাডভান্সড)") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth(),
+                Switch(
+                    checked = skill.enabled,
+                    onCheckedChange = { onToggleSkill(skill.id) },
+                    modifier = Modifier.padding(start = 4.dp),
                 )
-                Spacer(Modifier.height(12.dp))
-                Button(
-                    onClick = {
-                        onSave(
-                            apiKey,
-                            baseUrl.ifBlank { AiConfig.DEFAULT_BASE_URL },
-                            model.ifBlank { AiConfig.DEFAULT_MODEL },
-                        )
-                    },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(48.dp),
-                ) { Text("সেভ করে টেস্ট করো") }
-                Spacer(Modifier.height(20.dp))
+            }
+        }
+
+        item {
+            OutlinedButton(onClick = onAddSkill) {
+                Icon(Icons.Rounded.Add, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.width(6.dp))
+                Text("নিজের skill লিখো")
             }
         }
     }
 }
 
 @Composable
-private fun SetupStep(
-    number: String,
-    title: String,
-    body: String?,
-    code: String? = null,
-    secondCode: String? = null,
-    secondCodeNote: String? = null,
-    action: @Composable () -> Unit = {},
-    clipboard: androidx.compose.ui.platform.ClipboardManager? = null,
+private fun ProfileRow(
+    profile: ModelProfile,
+    test: EditorViewModel.ProfileTest?,
+    testing: Boolean,
+    onEdit: () -> Unit,
+    onDelete: () -> Unit,
+    onToggle: (Boolean) -> Unit,
+    onSetRole: (ModelRole) -> Unit,
 ) {
-    Row(Modifier.fillMaxWidth()) {
-        Surface(
-            color = MaterialTheme.colorScheme.primaryContainer,
-            shape = CircleShape,
-        ) {
-            Text(
-                number,
-                Modifier.padding(10.dp),
-                style = MaterialTheme.typography.labelLarge,
-                color = MaterialTheme.colorScheme.onPrimaryContainer,
-            )
-        }
-        Spacer(Modifier.width(12.dp))
-        Column(Modifier.weight(1f)) {
-            Text(title, style = MaterialTheme.typography.titleSmall)
-            body?.let {
-                Text(
-                    it,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-            code?.let { codeText ->
-                Spacer(Modifier.height(6.dp))
-                Surface(
-                    color = MaterialTheme.colorScheme.surfaceVariant,
-                    shape = RoundedCornerShape(8.dp),
-                ) {
-                    Row(
-                        Modifier
-                            .fillMaxWidth()
-                            .padding(start = 10.dp, top = 8.dp, bottom = 8.dp, end = 4.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        SelectionContainer(Modifier.weight(1f)) {
-                            Text(
-                                codeText,
-                                style = MaterialTheme.typography.labelSmall,
-                                fontFamily = FontFamily.Monospace,
-                                fontSize = 10.sp,
-                                maxLines = 4,
-                                overflow = TextOverflow.Ellipsis,
-                            )
-                        }
-                        clipboard?.let { cm ->
-                            IconButton(onClick = { cm.setText(AnnotatedString(codeText)) }) {
-                                Icon(
-                                    Icons.Rounded.ContentCopy,
-                                    contentDescription = "Copy",
-                                    modifier = Modifier.size(16.dp),
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-            if (secondCode != null) {
-                Spacer(Modifier.height(6.dp))
-                secondCodeNote?.let {
+    Surface(
+        color = MaterialTheme.colorScheme.surfaceVariant,
+        shape = RoundedCornerShape(12.dp),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Column(Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
                     Text(
-                        it,
+                        profile.model,
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontFamily = FontFamily.Monospace,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    Text(
+                        profile.providerLabel,
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
-                Spacer(Modifier.height(2.dp))
-                Surface(
-                    color = MaterialTheme.colorScheme.surfaceVariant,
-                    shape = RoundedCornerShape(8.dp),
-                ) {
+                IconButton(onClick = onEdit, modifier = Modifier.size(32.dp)) {
+                    Icon(
+                        Icons.Rounded.Edit,
+                        contentDescription = "Edit",
+                        modifier = Modifier.size(16.dp),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                IconButton(onClick = onDelete, modifier = Modifier.size(32.dp)) {
+                    Icon(
+                        Icons.Rounded.Delete,
+                        contentDescription = "Delete",
+                        modifier = Modifier.size(16.dp),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Switch(checked = profile.enabled, onCheckedChange = onToggle)
+            }
+
+            Row(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                ModelRole.entries.forEach { role ->
+                    FilterChip(
+                        selected = profile.role == role,
+                        onClick = { onSetRole(role) },
+                        label = {
+                            Text(
+                                when (role) {
+                                    ModelRole.CODER -> "Coder"
+                                    ModelRole.REVIEWER -> "Reviewer"
+                                    ModelRole.FALLBACK -> "Fallback"
+                                },
+                                style = MaterialTheme.typography.labelSmall,
+                            )
+                        },
+                    )
+                }
+            }
+
+            when {
+                testing -> Row(verticalAlignment = Alignment.CenterVertically) {
+                    CircularProgressIndicator(Modifier.size(12.dp), strokeWidth = 2.dp)
+                    Spacer(Modifier.width(6.dp))
+                    Text(
+                        "টেস্ট চলছে…",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                test != null -> Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        if (test.ok) Icons.Rounded.CheckCircle else Icons.Rounded.Warning,
+                        contentDescription = null,
+                        tint = if (test.ok) {
+                            MaterialTheme.colorScheme.tertiary
+                        } else {
+                            MaterialTheme.colorScheme.error
+                        },
+                        modifier = Modifier.size(14.dp),
+                    )
+                    Spacer(Modifier.width(6.dp))
+                    Text(
+                        test.message,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = if (test.ok) {
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                        } else {
+                            MaterialTheme.colorScheme.error
+                        },
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------- dialogs --
+
+@Composable
+private fun ProfileDialog(
+    state: EditorViewModel.AgentUiState,
+    initial: ModelProfile?,
+    onDismiss: () -> Unit,
+    onSave: (providerId: String, baseUrl: String, apiKey: String, model: String, role: ModelRole) -> Unit,
+    onLoadModels: (baseUrl: String, apiKey: String) -> Unit,
+) {
+    val context = LocalContext.current
+    val clipboard = LocalClipboardManager.current
+
+    var providerId by remember { mutableStateOf(initial?.providerId ?: ProviderPresets.OPENROUTER.id) }
+    var baseUrl by remember { mutableStateOf(initial?.baseUrl ?: ProviderPresets.OPENROUTER.baseUrl) }
+    var apiKey by remember { mutableStateOf(initial?.apiKey ?: "") }
+    var model by remember { mutableStateOf(initial?.model ?: "") }
+    var role by remember { mutableStateOf(initial?.role ?: ModelRole.CODER) }
+
+    val preset = ProviderPresets.byId(providerId)
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(if (initial == null) "নতুন model" else "Model edit করো") },
+        text = {
+            Column(
+                Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                // provider chips
+                ProviderPresets.all.forEach { p ->
                     Row(
                         Modifier
                             .fillMaxWidth()
-                            .padding(start = 10.dp, top = 8.dp, bottom = 8.dp, end = 4.dp),
+                            .clickable {
+                                providerId = p.id
+                                baseUrl = p.baseUrl
+                            }
+                            .padding(vertical = 2.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        SelectionContainer(Modifier.weight(1f)) {
-                            Text(
-                                secondCode,
-                                style = MaterialTheme.typography.labelSmall,
-                                fontFamily = FontFamily.Monospace,
-                                fontSize = 10.sp,
-                            )
-                        }
-                        clipboard?.let { cm ->
-                            IconButton(onClick = { cm.setText(AnnotatedString(secondCode)) }) {
-                                Icon(
-                                    Icons.Rounded.ContentCopy,
-                                    contentDescription = "Copy",
-                                    modifier = Modifier.size(16.dp),
+                        Checkbox(
+                            checked = providerId == p.id,
+                            onCheckedChange = {
+                                providerId = p.id
+                                baseUrl = p.baseUrl
+                            },
+                        )
+                        Column {
+                            Text(p.label, style = MaterialTheme.typography.bodyMedium)
+                            p.freeHint?.let {
+                                Text(
+                                    it,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
                             }
                         }
                     }
                 }
+
+                OutlinedTextField(
+                    value = baseUrl,
+                    onValueChange = { baseUrl = it },
+                    label = { Text("Base URL") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+
+                OutlinedTextField(
+                    value = apiKey,
+                    onValueChange = { apiKey = it },
+                    label = { Text("API key") },
+                    placeholder = { Text("sk-… / gsk_…") },
+                    singleLine = true,
+                    trailingIcon = {
+                        IconButton(onClick = {
+                            apiKey = clipboard.getText()?.text?.trim().orEmpty().ifBlank { apiKey }
+                        }) {
+                            Icon(
+                                Icons.Rounded.ContentCopy,
+                                contentDescription = "Clipboard থেকে paste",
+                                modifier = Modifier.size(18.dp),
+                            )
+                        }
+                    },
+                    supportingText = {
+                        preset.keyUrl?.let { url ->
+                            TextButton(onClick = { Intents.openUrl(context, url) }) {
+                                Text("Key নাও (${preset.label} dashboard)")
+                            }
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+
+                OutlinedTextField(
+                    value = model,
+                    onValueChange = { model = it },
+                    label = { Text("Model ID") },
+                    placeholder = { Text("যেমন: deepseek/deepseek-chat-v3.1:free") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+
+                OutlinedButton(
+                    onClick = { onLoadModels(baseUrl, apiKey) },
+                    enabled = baseUrl.isNotBlank() && apiKey.isNotBlank() && !state.modelsLoading,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    if (state.modelsLoading) {
+                        CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 2.dp)
+                    } else {
+                        Text("Models লোড করো")
+                    }
+                }
+
+                if (state.models.isNotEmpty()) {
+                    Text(
+                        "ট্যাপ করে model বেছে নাও:",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    state.models.filter { it.contains("free", ignoreCase = true) }
+                        .take(10)
+                        .forEach { id ->
+                            Text(
+                                id,
+                                style = MaterialTheme.typography.labelSmall,
+                                fontFamily = FontFamily.Monospace,
+                                color = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable { model = id }
+                                    .padding(vertical = 2.dp),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                    if (state.models.none { it.contains("free", ignoreCase = true) }) {
+                        state.models.take(8).forEach { id ->
+                            Text(
+                                id,
+                                style = MaterialTheme.typography.labelSmall,
+                                fontFamily = FontFamily.Monospace,
+                                color = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable { model = id }
+                                    .padding(vertical = 2.dp),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                    }
+                }
+
+                Text(
+                    "এই model-এর কাজ:",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    ModelRole.entries.forEach { r ->
+                        FilterChip(
+                            selected = role == r,
+                            onClick = { role = r },
+                            label = {
+                                Text(
+                                    when (r) {
+                                        ModelRole.CODER -> "Coder"
+                                        ModelRole.REVIEWER -> "Reviewer"
+                                        ModelRole.FALLBACK -> "Fallback"
+                                    },
+                                    style = MaterialTheme.typography.labelSmall,
+                                )
+                            },
+                        )
+                    }
+                }
+                Text(
+                    when (role) {
+                        ModelRole.CODER -> "মূল কোড লেখে (একটাই Coder থাকতে পারে)"
+                        ModelRole.REVIEWER -> "Coder-এর কাজ একবার দেখে ভুল ধরে"
+                        ModelRole.FALLBACK -> "আগের model fail করলে এটা এগিয়ে যায়"
+                    },
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
-            Spacer(Modifier.height(6.dp))
-            action()
-        }
-    }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = { onSave(providerId, baseUrl, apiKey, model, role) },
+                enabled = baseUrl.isNotBlank() && apiKey.isNotBlank() && model.isNotBlank(),
+            ) { Text("সেভ করে টেস্ট করো") }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("না") }
+        },
+    )
+}
+
+@Composable
+private fun SkillDialog(
+    onDismiss: () -> Unit,
+    onSave: (name: String, instructions: String) -> Unit,
+) {
+    var name by remember { mutableStateOf("") }
+    var instructions by remember { mutableStateOf("") }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("নিজের skill") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    "যেমন — নাম: \"Material You\", নির্দেশনা: \"সব screen-এ dynamic color ব্যবহার করবি\"",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                OutlinedTextField(
+                    value = name,
+                    onValueChange = { name = it },
+                    label = { Text("Skill-এর নাম") },
+                    singleLine = true,
+                )
+                OutlinedTextField(
+                    value = instructions,
+                    onValueChange = { instructions = it },
+                    label = { Text("নির্দেশনা (agent প্রতিবার পাবে)") },
+                    minLines = 3,
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = { onSave(name, instructions) },
+                enabled = name.isNotBlank() && instructions.isNotBlank(),
+            ) { Text("যোগ করো") }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("না") }
+        },
+    )
 }

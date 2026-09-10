@@ -4,9 +4,9 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonObject
 
 /**
- * Minimal OpenAI-compatible chat-completion DTOs. OmniRoute speaks this
- * format on its local endpoint (http://localhost:20128/v1), so these work
- * for any OpenAI-style server.
+ * Minimal OpenAI-compatible chat-completion DTOs — the wire format spoken by
+ * OpenRouter, Groq, Google Gemini (OpenAI endpoint), Cerebras and any custom
+ * OpenAI-style server.
  */
 @Serializable
 data class ChatMessage(

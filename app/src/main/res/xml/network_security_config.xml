@@ -1,8 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  OmniRoute runs on the same phone (Termux) and speaks plain HTTP on
-  localhost. Android blocks cleartext by default, so allow it for localhost
-  only — everything else stays HTTPS-only.
+  All AI provider presets are HTTPS. Cleartext is allowed for localhost /
+  127.0.0.1 only, so a user pointing the agent at a locally running
+  OpenAI-compatible server (e.g. LM Studio) still works — everything else
+  stays HTTPS-only.
 -->
 <network-security-config>
     <base-config cleartextTrafficPermitted="false" />

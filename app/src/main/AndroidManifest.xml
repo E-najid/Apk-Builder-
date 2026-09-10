@@ -8,9 +8,6 @@
     <uses-permission
         android:name="android.permission.WRITE_EXTERNAL_STORAGE"
         android:maxSdkVersion="28" />
-    <!-- Lets the app start OmniRoute inside Termux with one tap (optional;
-         Termux must have "allow-external-apps" enabled on its side). -->
-    <uses-permission android:name="com.termux.permission.RUN_COMMAND" />
 
     <application
         android:name=".ApkBuilderApp"
