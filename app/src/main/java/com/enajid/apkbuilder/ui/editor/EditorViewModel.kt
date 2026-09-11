@@ -1,6 +1,7 @@
 package com.enajid.apkbuilder.ui.editor
 
 import android.app.Application
+import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.viewModelScope
@@ -390,6 +391,60 @@ class EditorViewModel(
     }
 
     fun consumeMessage() = _state.update { it.copy(message = null) }
+
+    /**
+     * Swaps a binary file (image, jar…) for a newly picked one — committed
+     * straight to GitHub after the user confirmed, since binaries can't be
+     * edited as text drafts.
+     */
+    fun replaceBinaryFile(path: String, uri: Uri) {
+        ProjectFiles.criticalReason(path)?.let { reason ->
+            _state.update { it.copy(message = reason) }
+            return
+        }
+        if (_state.value.saving) return
+        viewModelScope.launch {
+            try {
+                _state.update { it.copy(saving = true) }
+                val bytes = withContext(Dispatchers.IO) {
+                    getApplication<Application>().contentResolver.openInputStream(uri)
+                        ?.use { it.readBytes() }
+                        ?: error("ফাইলটা পড়া গেল না")
+                }
+                if (bytes.size > 10 * 1024 * 1024) {
+                    error("ফাইলটা খুব বড় (${bytes.size / 1048576}MB) — 10MB পর্যন্ত চলে")
+                }
+                git.pushFiles(
+                    owner = owner,
+                    repo = repo,
+                    branch = branch,
+                    files = listOf(TemplateRenderer.RenderedFile(path, bytes)),
+                    deletions = emptyList(),
+                    message = "Replace ${path.substringAfterLast('/')} (from APK Builder)",
+                )
+                dirtyContents.remove(path)
+                fileCache.remove(path)
+                withContext(Dispatchers.IO) { localStore.removeDirtyFile(owner, repo, path) }
+                // Refresh the sha map so future deletes keep working.
+                runCatching {
+                    val entries = git.listFiles(owner, repo, branch)
+                    serverPaths = entries.map { it.path }
+                    shasByPath = entries.associate { it.path to it.sha }
+                }
+                _state.update {
+                    it.copy(saving = false, selectedPath = null, message = "$path বদলে গেছে ✓")
+                }
+                _selectedFile.value = null
+                select(path)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                _state.update {
+                    it.copy(saving = false, message = "বদলানো যায়নি: ${e.friendlyMessage()}")
+                }
+            }
+        }
+    }
 
     // ---------------------------------------------------------- ai agent --
 

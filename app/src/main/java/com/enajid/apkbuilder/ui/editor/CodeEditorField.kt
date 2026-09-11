@@ -35,6 +35,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.TextFieldValue
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.LineHeightStyle
 import androidx.compose.ui.unit.dp
@@ -58,6 +59,7 @@ fun CodeEditorField(
     language: SyntaxLanguage,
     modifier: Modifier = Modifier,
     readOnly: Boolean = false,
+    highlightEnabled: Boolean = true,
 ) {
     val darkTheme = isSystemInDarkTheme()
     val colors = remember(darkTheme) { if (darkTheme) SyntaxColors.dark() else SyntaxColors.light() }
@@ -166,7 +168,7 @@ fun CodeEditorField(
                                 .height(contentHeight)
                                 .padding(top = topPadding, bottom = topPadding),
                             textStyle = codeStyle,
-                            visualTransformation = transformation,
+                            visualTransformation = if (highlightEnabled) transformation else VisualTransformation.None,
                             cursorBrush = SolidColor(colors.cursor),
                             keyboardOptions = KeyboardOptions(
                                 keyboardType = KeyboardType.Ascii,

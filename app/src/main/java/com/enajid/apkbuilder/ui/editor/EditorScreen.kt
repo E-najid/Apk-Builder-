@@ -1,6 +1,9 @@
 package com.enajid.apkbuilder.ui.editor
 
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import android.net.Uri
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -18,9 +21,16 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.Build
+import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.KeyboardArrowDown
+import androidx.compose.material.icons.rounded.KeyboardArrowUp
 import androidx.compose.material.icons.rounded.Folder
+import androidx.compose.material.icons.rounded.Redo
 import androidx.compose.material.icons.rounded.Save
+import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.SmartToy
+import androidx.compose.material.icons.rounded.Undo
+import androidx.compose.material.icons.rounded.UploadFile
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -34,6 +44,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -79,16 +90,33 @@ fun EditorScreen(
     var newFileDialog by remember { mutableStateOf(false) }
     var deleteFileTarget by remember { mutableStateOf<String?>(null) }
 
+    val undoStack = remember { UndoStack() }
+    var findOpen by remember { mutableStateOf(false) }
+    var replaceBinaryPath by remember { mutableStateOf<String?>(null) }
+    var replaceBinaryUri by remember { mutableStateOf<Uri?>(null) }
+
     // Local text state, re-initialized whenever a different file is loaded —
     // or the AI agent rewrites the one that's open (bumping its revision).
     var field by remember(loadedFile?.path, loadedFile?.revision) {
         mutableStateOf(TextFieldValue(loadedFile?.content ?: ""))
     }
 
+    // History doesn't carry over to another file (or an AI rewrite of it).
+    LaunchedEffect(loadedFile?.path, loadedFile?.revision) { undoStack.reset() }
+
     BackHandler(enabled = state.dirty.isNotEmpty()) { exitDialog = true }
 
     // Coming back from a failed build with "Fix with AI": open the agent
     // chat with the error digest pre-filled.
+    val binaryPicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.GetContent()
+    ) { uri ->
+        if (uri != null && state.selectedIsBinary) {
+            replaceBinaryUri = uri
+            replaceBinaryPath = state.selectedPath
+        }
+    }
+
     LaunchedEffect(initialAgentPrompt) {
         initialAgentPrompt?.let { viewModel.seedAgentInput(it) }
     }
@@ -163,21 +191,55 @@ fun EditorScreen(
                         .fillMaxSize()
                         .imePadding()
                 ) {
-                    EditorStatusStrip(state = state, field = field)
+                    if (findOpen && loadedFile != null && !state.selectedIsBinary) {
+                        FindBar(
+                            field = field,
+                            onApply = { newValue ->
+                                if (newValue.text != field.text) undoStack.push(field)
+                                field = newValue
+                                viewModel.onContentChange(newValue.text)
+                            },
+                            onClose = { findOpen = false },
+                        )
+                    }
+                    EditorStatusStrip(
+                        state = state,
+                        field = field,
+                        canUndo = undoStack.canUndo,
+                        canRedo = undoStack.canRedo,
+                        onUndo = {
+                            undoStack.undo(field)?.let { restored ->
+                                field = restored
+                                viewModel.onContentChange(restored.text)
+                            }
+                        },
+                        onRedo = {
+                            undoStack.redo(field)?.let { restored ->
+                                field = restored
+                                viewModel.onContentChange(restored.text)
+                            }
+                        },
+                        onFind = { findOpen = !findOpen },
+                    )
                     HorizontalDivider()
                     Box(Modifier.weight(1f)) {
                         val currentFile = loadedFile
                         when {
                             state.fileLoading ->
                                 ScreenLoading("Opening ${state.selectedPath?.substringAfterLast('/') ?: "file"}…")
-                            state.selectedIsBinary -> BinaryPlaceholder()
+                            state.selectedIsBinary -> BinaryPlaceholder(
+                                onReplace = { binaryPicker.launch("*/*") }
+                            )
                             currentFile != null -> CodeEditorField(
                                 value = field,
                                 onValueChange = { newValue ->
-                                    field = applySmartEditing(field, newValue)
-                                    viewModel.onContentChange(field.text)
+                                    val processed = applySmartEditing(field, newValue)
+                                    if (processed.text != field.text) undoStack.push(field)
+                                    field = processed
+                                    viewModel.onContentChange(processed.text)
                                 },
                                 language = inferLanguage(currentFile.path),
+                                highlightEnabled = field.text.length < HIGHLIGHT_LIMIT,
                             )
                             else -> NoFileSelected(onOpenFiles = { drawerOpen = true })
                         }
@@ -294,17 +356,69 @@ fun EditorScreen(
             )
         }
     }
+
+    if (replaceBinaryUri != null && replaceBinaryPath != null) {
+        val path = replaceBinaryPath!!
+        AlertDialog(
+            onDismissRequest = {
+                if (!state.saving) {
+                    replaceBinaryUri = null
+                    replaceBinaryPath = null
+                }
+            },
+            title = { Text("“${path.substringAfterLast('/')}” বদলে দেবে?") },
+            text = {
+                Text(
+                    "বাছাই করা নতুন ফাইলটা সরাসরি GitHub-এ commit হবে (এখনই)। " +
+                        "আগের ফাইলটা আর ফেরত আসবে না।"
+                )
+            },
+            confirmButton = {
+                if (state.saving) {
+                    CircularProgressIndicator(Modifier.size(22.dp))
+                } else {
+                    TextButton(onClick = {
+                        replaceBinaryUri?.let { uri -> viewModel.replaceBinaryFile(path, uri) }
+                        replaceBinaryUri = null
+                        replaceBinaryPath = null
+                    }) { Text("বদলে দাও") }
+                }
+            },
+            dismissButton = {
+                if (!state.saving) {
+                    TextButton(onClick = {
+                        replaceBinaryUri = null
+                        replaceBinaryPath = null
+                    }) { Text("না") }
+                }
+            },
+        )
+    }
 }
 
 @Composable
-private fun EditorStatusStrip(state: EditorViewModel.EditorUiState, field: TextFieldValue) {
+private fun EditorStatusStrip(
+    state: EditorViewModel.EditorUiState,
+    field: TextFieldValue,
+    canUndo: Boolean = false,
+    canRedo: Boolean = false,
+    onUndo: () -> Unit = {},
+    onRedo: () -> Unit = {},
+    onFind: () -> Unit = {},
+) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 12.dp, vertical = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
     ) {
+        IconButton(onClick = onUndo, enabled = canUndo, modifier = Modifier.size(28.dp)) {
+            Icon(Icons.Rounded.Undo, contentDescription = "Undo", modifier = Modifier.size(16.dp))
+        }
+        IconButton(onClick = onRedo, enabled = canRedo, modifier = Modifier.size(28.dp)) {
+            Icon(Icons.Rounded.Redo, contentDescription = "Redo", modifier = Modifier.size(16.dp))
+        }
         Text(
             state.selectedPath ?: "No file selected",
             style = MaterialTheme.typography.labelSmall,
@@ -331,21 +445,34 @@ private fun EditorStatusStrip(state: EditorViewModel.EditorUiState, field: TextF
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
+        IconButton(onClick = onFind, modifier = Modifier.size(28.dp)) {
+            Icon(
+                Icons.Rounded.Search,
+                contentDescription = "Find / replace",
+                modifier = Modifier.size(16.dp),
+            )
+        }
     }
 }
 
 @Composable
-private fun BinaryPlaceholder() {
+private fun BinaryPlaceholder(onReplace: () -> Unit) {
     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
             Text("🔐", style = MaterialTheme.typography.headlineMedium)
             Spacer(Modifier.height(8.dp))
             Text("This is a binary file", style = MaterialTheme.typography.titleSmall)
             Text(
-                "Images, jars and other binaries can't be edited here (yet).",
+                "Images, jars and other binaries can't be edited as text — কিন্তু পুরো ফাইলটা বদলে দেওয়া যায়।",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+            Spacer(Modifier.height(12.dp))
+            FilledTonalButton(onClick = onReplace) {
+                Icon(Icons.Rounded.UploadFile, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.width(6.dp))
+                Text("ফাইল বদলে দাও")
+            }
         }
     }
 }
@@ -387,6 +514,114 @@ private fun NewFileDialog(
         },
     )
 }
+
+/**
+ * Find / replace bar: case-insensitive search with a match counter,
+ * next/prev navigation (the match gets selected so the field scrolls to it),
+ * replace-one and replace-all.
+ */
+@Composable
+private fun FindBar(
+    field: TextFieldValue,
+    onApply: (TextFieldValue) -> Unit,
+    onClose: () -> Unit,
+) {
+    var query by remember { mutableStateOf("") }
+    var replacement by remember { mutableStateOf("") }
+    var index by remember { mutableStateOf(0) }
+
+    val matches = remember(query, field.text) {
+        if (query.isBlank()) {
+            emptyList()
+        } else {
+            val text = field.text
+            val found = mutableListOf<Int>()
+            var from = 0
+            while (found.size < 500) {
+                val at = text.indexOf(query, from, ignoreCase = true)
+                if (at < 0) break
+                found += at
+                from = at + query.length
+            }
+            found
+        }
+    }
+    val current = matches.getOrNull(index.coerceIn(0, (matches.size - 1).coerceAtLeast(0)))
+
+    // Select the current match so it's highlighted and scrolled into view.
+    LaunchedEffect(query, index, matches.size) {
+        if (current != null && field.selection.min != current) {
+            onApply(field.copy(selection = TextRange(current, current + query.length)))
+        }
+    }
+
+    Surface(tonalElevation = 2.dp, modifier = Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(horizontal = 8.dp, vertical = 4.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                OutlinedTextField(
+                    value = query,
+                    onValueChange = {
+                        query = it
+                        index = 0
+                    },
+                    modifier = Modifier.weight(1f),
+                    placeholder = { Text("খুঁজো…", style = MaterialTheme.typography.bodySmall) },
+                    singleLine = true,
+                )
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    "${if (current == null) 0 else index.coerceIn(0, matches.lastIndex) + 1}/${matches.size}",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                IconButton(
+                    onClick = { if (matches.isNotEmpty()) index = (index - 1 + matches.size) % matches.size },
+                    enabled = matches.isNotEmpty(),
+                    modifier = Modifier.size(32.dp),
+                ) {
+                    Icon(Icons.Rounded.KeyboardArrowUp, contentDescription = "Previous match", modifier = Modifier.size(18.dp))
+                }
+                IconButton(
+                    onClick = { if (matches.isNotEmpty()) index = (index + 1) % matches.size },
+                    enabled = matches.isNotEmpty(),
+                    modifier = Modifier.size(32.dp),
+                ) {
+                    Icon(Icons.Rounded.KeyboardArrowDown, contentDescription = "Next match", modifier = Modifier.size(18.dp))
+                }
+                IconButton(onClick = onClose, modifier = Modifier.size(32.dp)) {
+                    Icon(Icons.Rounded.Close, contentDescription = "Close find", modifier = Modifier.size(18.dp))
+                }
+            }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                OutlinedTextField(
+                    value = replacement,
+                    onValueChange = { replacement = it },
+                    modifier = Modifier.weight(1f),
+                    placeholder = { Text("বদলাবে দিয়ে…", style = MaterialTheme.typography.bodySmall) },
+                    singleLine = true,
+                )
+                TextButton(
+                    onClick = {
+                        val at = current ?: return@TextButton
+                        val newText = field.text.replaceRange(at, at + query.length, replacement)
+                        onApply(TextFieldValue(newText, TextRange(at + replacement.length)))
+                    },
+                    enabled = current != null,
+                ) { Text("বদলাও") }
+                TextButton(
+                    onClick = {
+                        val newText = field.text.replace(query, replacement, ignoreCase = true)
+                        onApply(TextFieldValue(newText, TextRange(newText.length)))
+                    },
+                    enabled = matches.isNotEmpty(),
+                ) { Text("সব") }
+            }
+        }
+    }
+}
+
+/** Above this size the editor drops syntax highlighting to stay responsive. */
+private const val HIGHLIGHT_LIMIT = 40_000
 
 /** "Ln 12, Col 8" from the current selection. */
 private fun cursorLabel(value: TextFieldValue): String {
