@@ -12,6 +12,7 @@ import com.enajid.apkbuilder.data.ProjectsRepository
 import com.enajid.apkbuilder.data.TemplateRenderer
 import com.enajid.apkbuilder.data.ai.AgentEvent
 import com.enajid.apkbuilder.data.ai.AgentProjectAccess
+import com.enajid.apkbuilder.data.ai.AppConfigSnapshot
 import com.enajid.apkbuilder.data.ai.AiDebugLog
 import com.enajid.apkbuilder.data.ai.AiProfilesStore
 import com.enajid.apkbuilder.data.ai.ChatMessage
@@ -125,6 +126,9 @@ class EditorViewModel(
     /** Current blob sha per path — needed to delete files via the Contents API. */
     private var shasByPath: Map<String, String> = emptyMap()
     private val dirtyContents = LinkedHashMap<String, String>()
+
+    /** Files the agent (or user) marked for deletion — applied on Save. */
+    private val draftDeletes = mutableSetOf<String>()
     private var branch: String = "main"
     private var debounce: Job? = null
 
@@ -267,24 +271,41 @@ class EditorViewModel(
      * Commits all unsaved changes in a single commit. Returns true when the
      * project is safely on GitHub (also true when there was nothing to save).
      */
+    /**
+     * Commits all unsaved changes — including pending file deletions — in a
+     * single commit. Returns true when the project is safely on GitHub
+     * (also true when there was nothing to save).
+     */
     suspend fun commitPending(): Boolean {
-        if (dirtyContents.isEmpty()) return true
+        if (dirtyContents.isEmpty() && draftDeletes.isEmpty()) return true
         return try {
             _state.update { it.copy(saving = true) }
             val files = dirtyContents.map { (path, content) ->
                 TemplateRenderer.RenderedFile(path, content.toByteArray(Charsets.UTF_8))
             }
+            val deletes = draftDeletes.toList()
             git.pushFiles(
                 owner = owner,
                 repo = repo,
                 branch = branch,
                 files = files,
-                deletions = emptyList(),
+                deletions = deletes,
                 message = "Save changes from APK Builder",
             )
             dirtyContents.clear()
+            deletes.forEach {
+                serverPaths = serverPaths - it
+                shasByPath = shasByPath - it
+            }
+            draftDeletes.clear()
             withContext(Dispatchers.IO) { localStore.clearDirty(owner, repo) }
-            _state.update { it.copy(saving = false, dirty = emptySet()) }
+            _state.update {
+                it.copy(
+                    saving = false,
+                    dirty = emptySet(),
+                    paths = (serverPaths + dirtyContents.keys).distinct().sorted(),
+                )
+            }
             true
         } catch (e: CancellationException) {
             throw e
@@ -293,6 +314,7 @@ class EditorViewModel(
             false
         }
     }
+
 
     /**
      * Deletes a file from GitHub (or, if it was never committed, just from
@@ -514,55 +536,67 @@ class EditorViewModel(
      */
     fun applyProjectConfig(newAppName: String, newAppId: String) {
         viewModelScope.launch {
-            try {
-                val appName = newAppName.trim()
-                val appId = newAppId.trim()
-                if (appName.isBlank() && appId.isBlank()) {
-                    _state.update { it.copy(message = "কিছু লেখো আগে") }
-                    return@launch
-                }
-                if (appId.isNotBlank() &&
-                    !Regex("^[a-zA-Z][a-zA-Z0-9_]*(\\.[a-zA-Z][a-zA-Z0-9_]*)+$").matches(appId)
-                ) {
-                    _state.update { it.copy(message = "Application ID দেখতে এমন হতে হবে: com.example.app") }
-                    return@launch
-                }
-                stringsPath()?.let { path ->
-                    val old = projectAccess.readFile(path) ?: return@let
-                    val updated = old.replace(
-                        Regex("""(<string name="app_name">).*?(</string>)"""),
-                        "$1" + TemplateRenderer.escapeXmlText(appName) + "$2",
-                    )
-                    if (updated != old) projectAccess.writeFile(path, updated)
-                } ?: run {
-                    // No strings.xml (Flutter): the manifest label is the app name.
-                    manifestPath()?.let { path ->
-                        val old = projectAccess.readFile(path) ?: return@let
-                        val updated = old.replace(
-                            Regex("""(android:label=")[^"]+(")"""),
-                            "$1" + TemplateRenderer.escapeXmlText(appName) + "$2",
-                        )
-                        if (updated != old) projectAccess.writeFile(path, updated)
-                    }
-                }
-                appGradlePath()?.let { path ->
-                    val old = projectAccess.readFile(path) ?: return@let
-                    val updated = old
-                        .replace(Regex("""(applicationId\s*=\s*")[^"]+(")"""), "$1$appId$2")
-                        .replace(Regex("""(applicationId\s+")[^"]+(")"""), "$1$appId$2")
-                    if (updated != old) projectAccess.writeFile(path, updated)
-                }
-                _state.update {
-                    it.copy(message = "বদল draft হিসেবে বসেছে — Save চেপে GitHub-এ পাঠাও")
-                }
+            val error = try {
+                applyProjectConfigDraft(newAppName, newAppId)
             } catch (e: CancellationException) {
                 throw e
             } catch (t: Throwable) {
                 AiDebugLog.error("config", "project config বদলানো ব্যর্থ", t)
-                _state.update { it.copy(message = t.friendlyMessage()) }
+                t.friendlyMessage()
             }
+            _state.update { it.copy(message = error ?: "বদল draft হিসেবে বসেছে — Save চেপে GitHub-এ পাঠাও") }
         }
     }
+
+    /**
+     * Draft-level core of [applyProjectConfig]: validates, then writes the
+     * app-name (strings.xml, or the manifest label on Flutter) and the
+     * applicationId (app gradle) as editable drafts. Returns an error
+     * message, or null on success. Also the backend of the agent's
+     * set_app_config tool.
+     */
+    private suspend fun applyProjectConfigDraft(newAppName: String, newAppId: String): String? {
+        val appName = newAppName.trim()
+        val appId = newAppId.trim()
+        if (appName.isBlank() && appId.isBlank()) return "কিছু লেখো আগে"
+        if (appId.isNotBlank() &&
+            !Regex("^[a-zA-Z][a-zA-Z0-9_]*(\\.[a-zA-Z][a-zA-Z0-9_]*)+$").matches(appId)
+        ) {
+            return "Application ID দেখতে এমন হতে হবে: com.example.app"
+        }
+        var anyTarget = false
+        stringsPath()?.let { path ->
+            anyTarget = true
+            val old = projectAccess.readFile(path) ?: return@let
+            val updated = old.replace(
+                Regex("""(<string name="app_name">).*?(</string>)"""),
+                "$1" + TemplateRenderer.escapeXmlText(appName) + "$2",
+            )
+            if (updated != old) projectAccess.writeFile(path, updated)
+        } ?: run {
+            // No strings.xml (Flutter): the manifest label is the app name.
+            manifestPath()?.let { path ->
+                anyTarget = true
+                val old = projectAccess.readFile(path) ?: return@let
+                val updated = old.replace(
+                    Regex("""(android:label=")[^"]+(")"""),
+                    "$1" + TemplateRenderer.escapeXmlText(appName) + "$2",
+                )
+                if (updated != old) projectAccess.writeFile(path, updated)
+            }
+        }
+        appGradlePath()?.let { path ->
+            anyTarget = true
+            val old = projectAccess.readFile(path) ?: return@let
+            val updated = old
+                .replace(Regex("""(applicationId\s*=\s*")[^"]+(")"""), "$1$appId$2")
+                .replace(Regex("""(applicationId\s+")[^"]+(")"""), "$1$appId$2")
+            if (updated != old) projectAccess.writeFile(path, updated)
+        }
+        if (!anyTarget) return "এই প্রজেক্টে app name/ID বদলানোর ফাইল পাওয়া যায়নি"
+        return null
+    }
+
 
     /**
      * Replaces the launcher icon with the picked image (PNG), committed
@@ -612,13 +646,17 @@ class EditorViewModel(
     private val projectAccess = object : AgentProjectAccess {
 
         override suspend fun listPaths(): List<String> =
-            (serverPaths + dirtyContents.keys).distinct().sorted()
+            (serverPaths + dirtyContents.keys).filter { it !in draftDeletes }.distinct().sorted()
 
         override suspend fun readFile(path: String): String? {
             dirtyContents[path]?.let { return it }
+            fileCache[path]?.let { return it }
             return try {
                 val bytes = git.readFile(owner, repo, branch, path)
-                if (bytes.contains(0.toByte())) "(binary file)" else String(bytes, Charsets.UTF_8)
+                val text = if (bytes.contains(0.toByte())) "(binary file)" else String(bytes, Charsets.UTF_8)
+                fileCache[path] = text
+                while (fileCache.size > 40) fileCache.remove(fileCache.keys.first())
+                text
             } catch (e: Exception) {
                 null
             }
@@ -647,12 +685,63 @@ class EditorViewModel(
             }
             _state.update {
                 it.copy(
-                    paths = (serverPaths + dirtyContents.keys).distinct().sorted(),
+                    paths = (serverPaths + dirtyContents.keys).filter { p -> p !in draftDeletes }.distinct().sorted(),
                     dirty = dirtyContents.keys.toSet(),
                 )
             }
         }
+
+        /** Marks a file for deletion — applied as a draft, when the user saves. */
+        override suspend fun deleteFile(path: String): String? {
+            ProjectFiles.criticalReason(path)?.let { return it }
+            val known = path in serverPaths || dirtyContents.containsKey(path)
+            if (!known) return "error: file not found: $path"
+            dirtyContents.remove(path)
+            if (path in serverPaths) draftDeletes += path
+            fileCache.remove(path)
+            withContext(Dispatchers.IO) { localStore.removeDirtyFile(owner, repo, path) }
+            if (_state.value.selectedPath == path) {
+                _state.update { it.copy(selectedPath = null) }
+                _selectedFile.value = null
+            }
+            _state.update {
+                it.copy(
+                    paths = (serverPaths + dirtyContents.keys).filter { p -> p !in draftDeletes }.distinct().sorted(),
+                    dirty = dirtyContents.keys.toSet(),
+                )
+            }
+            return null
+        }
+
+        override suspend fun readAppConfig(): AppConfigSnapshot? =
+            readProjectConfig()?.let { AppConfigSnapshot(it.appName, it.applicationId) }
+
+        override suspend fun applyAppConfig(appName: String?, applicationId: String?): String? = try {
+            applyProjectConfigDraft(appName.orEmpty(), applicationId.orEmpty())
+        } catch (e: CancellationException) {
+            throw e
+        } catch (t: Throwable) {
+            AiDebugLog.error("config", "project config বদলানো ব্যর্থ", t)
+            t.friendlyMessage()
+        }
+
+        override suspend fun buildStatus(): String? = try {
+            git.latestBuildSummary(owner, repo)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            "error: build status আনা যায়নি: ${e.friendlyMessage()}"
+        }
+
+        override suspend fun gitLog(limit: Int): List<String> = try {
+            git.commitSubjects(owner, repo, branch, limit)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            emptyList()
+        }
     }
+
 
     /** DataStore reads must never crash the app — log and degrade instead. */
     private suspend fun safeProfiles(): List<ModelProfile> = try {
@@ -1114,6 +1203,9 @@ class EditorViewModel(
             appendLine("Rules:")
             appendLine("- read_file before editing a file you haven't seen in this conversation.")
             appendLine("- write_file creates or overwrites a file; make the smallest change that fulfills the request.")
+            appendLine("- search_files finds usages across the whole project — far cheaper than reading files one by one.")
+            appendLine("- delete_file and set_app_config also apply as drafts, only when the user saves.")
+            appendLine("- get_build_status shows the latest cloud build (and failing steps); git_log shows recent commits.")
             appendLine("- Only plain-text files. New Kotlin files go under app/src/main/java/ with a matching package declaration.")
             appendLine("- Available libraries: androidx.core, androidx.activity.compose, Compose UI + Material3 (compose BOM). No third-party libraries; standard Android/Compose APIs only.")
             appendLine("- When done, stop calling tools and reply with a short summary of what you changed.")

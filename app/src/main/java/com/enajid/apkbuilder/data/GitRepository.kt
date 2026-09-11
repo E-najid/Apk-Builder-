@@ -146,6 +146,51 @@ class GitRepository(private val api: GitHubApi) {
      * (which, unlike the Git Data API, is allowed to do that). The placeholder
      * README is overwritten by the real template push that follows.
      */
+    /**
+     * Latest workflow run for the repo, formatted for the agent's
+     * get_build_status tool: run number, name, status/conclusion and — when
+     * it failed — the failing steps. Null when the repo has no runs yet.
+     */
+    suspend fun latestBuildSummary(owner: String, repo: String): String? {
+        val run = api.listRuns(owner, repo, perPage = 1).workflow_runs.firstOrNull()
+            ?: return null
+        val state = if (run.status == "completed") {
+            "completed: ${run.conclusion ?: "unknown"}"
+        } else {
+            run.status
+        }
+        return buildString {
+            appendLine("run #${run.run_number} \"${run.name}\" — $state")
+            appendLine("trigger: ${run.event}, updated ${run.updated_at}")
+            appendLine(run.html_url)
+            if (run.status == "completed" && run.conclusion == "failure") {
+                val failedSteps = runCatching {
+                    api.getJobs(owner, repo, run.id).jobs
+                        .flatMap { job ->
+                            job.steps
+                                .filter { it.conclusion == "failure" }
+                                .map { "${job.name} → ${it.name}" }
+                        }
+                }.getOrDefault(emptyList())
+                if (failedSteps.isNotEmpty()) {
+                    appendLine("failing steps:")
+                    failedSteps.forEach { appendLine("- $it") }
+                }
+            }
+        }.trim()
+    }
+
+    /** Recent commit subjects as "shortsha message", newest first. */
+    suspend fun commitSubjects(
+        owner: String,
+        repo: String,
+        branch: String,
+        limit: Int = 10,
+    ): List<String> = runCatching {
+        api.listCommits(owner, repo, sha = branch, perPage = limit.coerceIn(1, 30))
+            .map { "${it.sha.take(7)} ${it.commit.message.substringBefore('\n').take(100)}" }
+    }.getOrDefault(emptyList())
+
     private suspend fun initializeEmptyRepo(owner: String, repo: String, branch: String) {
         try {
             api.putContent(

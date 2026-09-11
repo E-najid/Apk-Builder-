@@ -12,11 +12,43 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 
-/** What the agent is allowed to do with the currently open project. */
+/** App name + applicationId snapshot for the set_app_config tool. */
+data class AppConfigSnapshot(val appName: String, val applicationId: String)
+
+/**
+ * What the agent is allowed to do with the currently open project.
+ *
+ * The first three members are required everywhere. The rest have default
+ * "not supported" implementations so simple hosts (and JVM tests) keep
+ * compiling — hosts override what they can provide.
+ */
 interface AgentProjectAccess {
     suspend fun listPaths(): List<String>
     suspend fun readFile(path: String): String?
     suspend fun writeFile(path: String, content: String)
+
+    /**
+     * Marks a file for deletion — as a draft the user still has to save.
+     * Returns an error message, or null on success.
+     */
+    suspend fun deleteFile(path: String): String? =
+        "error: file deletion is not supported for this project"
+
+    /** Current app name + applicationId, when the host supports project config. */
+    suspend fun readAppConfig(): AppConfigSnapshot? = null
+
+    /**
+     * Applies an app name / applicationId change — as drafts. Returns an
+     * error message, or null on success.
+     */
+    suspend fun applyAppConfig(appName: String?, applicationId: String?): String? =
+        "error: app config changes are not supported for this project"
+
+    /** Latest CI build status text for the project repo, or null when unknown. */
+    suspend fun buildStatus(): String? = null
+
+    /** Recent commits, newest first, already formatted for display. */
+    suspend fun gitLog(limit: Int): List<String> = emptyList()
 }
 
 sealed interface AgentEvent {
@@ -78,6 +110,93 @@ class AiAgent(
                     put("required", buildJsonArray {
                         add("path")
                         add("content")
+                    })
+                },
+            ),
+        ),
+        ToolSpec(
+            function = FunctionSpec(
+                name = "list_files",
+                description = "List every file in the current project, one path per line. " +
+                    "Use after creating or deleting files to see the fresh list.",
+            ),
+        ),
+        ToolSpec(
+            function = FunctionSpec(
+                name = "search_files",
+                description = "Search all project files with a regular expression. " +
+                    "Returns matches as 'path:line: text'. Far cheaper than reading files one by one.",
+                parameters = buildJsonObject {
+                    put("type", "object")
+                    put("properties", buildJsonObject {
+                        put("pattern", buildJsonObject {
+                            put("type", "string")
+                            put("description", "Regular expression to search for")
+                        })
+                        put("max_results", buildJsonObject {
+                            put("type", "integer")
+                            put("description", "Maximum number of matches to return (default 40)")
+                        })
+                    })
+                    put("required", buildJsonArray { add("pattern") })
+                },
+            ),
+        ),
+        ToolSpec(
+            function = FunctionSpec(
+                name = "delete_file",
+                description = "Mark a file for deletion. Applied as a draft when the user saves. " +
+                    "Never delete files the app needs to build (gradle files, the manifest, the workflow).",
+                parameters = buildJsonObject {
+                    put("type", "object")
+                    put("properties", buildJsonObject {
+                        put("path", buildJsonObject {
+                            put("type", "string")
+                            put("description", "Project-relative file path")
+                        })
+                    })
+                    put("required", buildJsonArray { add("path") })
+                },
+            ),
+        ),
+        ToolSpec(
+            function = FunctionSpec(
+                name = "set_app_config",
+                description = "Change the app's display name and/or application ID (package). " +
+                    "Applied as drafts the user reviews before saving.",
+                parameters = buildJsonObject {
+                    put("type", "object")
+                    put("properties", buildJsonObject {
+                        put("app_name", buildJsonObject {
+                            put("type", "string")
+                            put("description", "New app display name (optional)")
+                        })
+                        put("application_id", buildJsonObject {
+                            put("type", "string")
+                            put("description", "New application ID, e.g. com.example.app (optional)")
+                        })
+                    })
+                },
+            ),
+        ),
+        ToolSpec(
+            function = FunctionSpec(
+                name = "get_build_status",
+                description = "Get the latest GitHub Actions build for this project: " +
+                    "run number, status, conclusion and failing steps, if any.",
+            ),
+        ),
+        ToolSpec(
+            function = FunctionSpec(
+                name = "git_log",
+                description = "List recent commits of the project repository, newest first.",
+                parameters = buildJsonObject {
+                    put("type", "object")
+                    put("properties", buildJsonObject {
+                        put("limit", buildJsonObject {
+                            put("type", "integer")
+                            put("description", "How many commits to list (default 10, max 30)")
+                        })
                     })
                 },
             ),
@@ -182,9 +301,16 @@ class AiAgent(
             Json.parseToJsonElement(call.function.arguments).jsonObject
         }.getOrNull()
         val path = args?.get("path")?.jsonPrimitive?.contentOrNull
+        val pattern = args?.get("pattern")?.jsonPrimitive?.contentOrNull
         return when (call.function.name) {
             "read_file" -> "read ${path ?: "?"}"
             "write_file" -> "write ${path ?: "?"}"
+            "list_files" -> "list files"
+            "search_files" -> "search /${pattern ?: "?"}/"
+            "delete_file" -> "delete ${path ?: "?"}"
+            "set_app_config" -> "app config"
+            "get_build_status" -> "check build"
+            "git_log" -> "git log"
             else -> call.function.name
         }
     }
@@ -215,6 +341,64 @@ class AiAgent(
                 project.writeFile(path, content)
                 "ok: wrote ${content.length} chars to $path"
             }
+            "list_files" -> {
+                val paths = project.listPaths()
+                if (paths.isEmpty()) {
+                    "no files yet"
+                } else {
+                    paths.take(MAX_LIST_FILES).joinToString("\n") +
+                        if (paths.size > MAX_LIST_FILES) "\n…(${paths.size - MAX_LIST_FILES} more)" else ""
+                }
+            }
+            "search_files" -> {
+                val pattern = args.stringArg("pattern") ?: return "error: missing 'pattern'"
+                val maxResults = args.intArg("max_results")?.coerceIn(1, 100) ?: MAX_SEARCH_RESULTS
+                val regex = try {
+                    Regex(pattern)
+                } catch (e: Exception) {
+                    return "error: invalid regex: ${e.message}"
+                }
+                val matches = StringBuilder()
+                var count = 0
+                search@ for (path in project.listPaths()) {
+                    val content = project.readFile(path) ?: continue
+                    content.lineSequence().forEachIndexed { index, line ->
+                        if (count >= maxResults || matches.length > MAX_SEARCH_OUTPUT) return@search
+                        if (regex.containsMatchIn(line)) {
+                            matches.appendLine("$path:${index + 1}: ${line.trim().take(160)}")
+                            count++
+                        }
+                    }
+                }
+                when {
+                    count == 0 -> "no matches for /$pattern/"
+                    count >= maxResults || matches.length > MAX_SEARCH_OUTPUT ->
+                        matches.toString() + "…(result list truncated)"
+                    else -> matches.toString()
+                }
+            }
+            "delete_file" -> {
+                val path = args.stringArg("path") ?: return "error: missing 'path'"
+                project.deleteFile(path) ?: "ok: $path marked for deletion (applied when the user saves)"
+            }
+            "set_app_config" -> {
+                val appName = args.stringArg("app_name")?.trim()
+                val appId = args.stringArg("application_id")?.trim()
+                if (appName.isNullOrBlank() && appId.isNullOrBlank()) {
+                    return "error: give app_name or application_id"
+                }
+                project.applyAppConfig(
+                    appName?.takeIf { it.isNotBlank() },
+                    appId?.takeIf { it.isNotBlank() },
+                ) ?: "ok: config changes saved as drafts (applied when the user saves)"
+            }
+            "get_build_status" ->
+                project.buildStatus() ?: "error: no build information available for this project"
+            "git_log" -> {
+                val limit = args.intArg("limit")?.coerceIn(1, 30) ?: 10
+                val commits = project.gitLog(limit)
+                if (commits.isEmpty()) "no commits found" else commits.joinToString("\n")
+            }
             else -> "error: unknown tool '$name'"
         }
     }
@@ -222,8 +406,15 @@ class AiAgent(
     private fun JsonObject.stringArg(name: String): String? =
         (this[name] as? JsonPrimitive)?.contentOrNull
 
+    /** Lenient int arg: accepts both 40 and "40". */
+    private fun JsonObject.intArg(name: String): Int? =
+        (this[name] as? JsonPrimitive)?.contentOrNull?.trim()?.toIntOrNull()
+
     companion object {
         const val MAX_STEPS = 25
         const val MAX_READ_CHARS = 6000
+        const val MAX_LIST_FILES = 500
+        const val MAX_SEARCH_RESULTS = 40
+        const val MAX_SEARCH_OUTPUT = 6000
     }
 }
