@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths>
+    <!-- Built APKs are cached here before being shared or installed. -->
+    <files-path
+        name="apks"
+        path="apks/" />
+</paths>

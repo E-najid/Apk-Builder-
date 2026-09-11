@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  All AI provider presets are HTTPS. Cleartext is allowed so users can point
+  the agent at a locally running OpenAI-compatible server (LM Studio, Ollama
+  on the LAN, etc.) — GitHub API calls are always full https:// URLs and are
+  unaffected.
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true" />
+</network-security-config>

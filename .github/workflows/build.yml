@@ -1,0 +1,179 @@
+name: Build APK
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+      - name: Grant execute permission for gradlew
+        run: chmod +x gradlew
+      - name: Build APK & run unit tests
+        env:
+          # Optional: set this repo secret to your GitHub OAuth app's client ID
+          # and every CI-built APK will have sign-in working out of the box.
+          GITHUB_CLIENT_ID: ${{ secrets.GITHUB_CLIENT_ID }}
+        run: |
+          set -o pipefail
+          if [ -n "$GITHUB_CLIENT_ID" ]; then
+            echo "Building with the GITHUB_CLIENT_ID repo secret baked in"
+            ./gradlew assembleDebug testDebugUnitTest -PGITHUB_CLIENT_ID="$GITHUB_CLIENT_ID" 2>&1 | tee build-output.log
+          else
+            echo "No GITHUB_CLIENT_ID secret set - building without one (the app shows its one-time setup screen)"
+            ./gradlew assembleDebug testDebugUnitTest 2>&1 | tee build-output.log
+          fi
+      - name: Surface errors as annotations
+        if: failure()
+        run: |
+          for log in build-output.log test-output.log; do
+            [ -f "$log" ] || continue
+            grep -E "^e: |error: |FAILURE:|What went wrong|Caused by:|Unresolved|Could not |FAILED" "$log" | head -30 | while IFS= read -r line; do
+              printf '::error::%s\n' "${line:0:600}"
+            done
+          done
+      - name: Report errors on the PR
+        if: failure() && github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.number }}
+        run: |
+          {
+            echo "### ❌ Build failed — error digest (auto-generated)"
+            for log in build-output.log test-output.log; do
+              if [ -f "$log" ]; then
+                echo ""
+                echo "#### \`$log\` — errors"
+                echo '```'
+                grep -E "^e: |error: |FAILURE:|What went wrong|Caused by:|Unresolved|Could not |FAILED" "$log" | head -60
+                echo '```'
+                echo ""
+                echo "<details><summary>tail of $log</summary>"
+                echo ""
+                echo '```'
+                tail -n 40 "$log"
+                echo '```'
+                echo "</details>"
+              fi
+            done
+          } > comment.md
+          head -c 60000 comment.md > comment-final.md
+          gh pr comment "$PR_NUMBER" --body-file comment-final.md
+      - name: Verify template assets are packaged in the APK
+        run: |
+          APK=$(ls app/build/outputs/apk/debug/*.apk | head -n 1)
+          echo "Checking template assets in $APK"
+          unzip -l "$APK" | awk 'NR>3 {print $4}' > /tmp/apk-entries.txt
+          MISSING=0
+          while IFS= read -r f; do
+            if ! grep -qx "assets/$f" /tmp/apk-entries.txt; then
+              echo "::error::Template asset missing from the APK: $f"
+              MISSING=1
+            fi
+          done <<'EOF'
+          templates/kotlin-app/dot-github/workflows/build.yml
+          templates/kotlin-app/dot-gitignore
+          templates/kotlin-app/README.md
+          templates/kotlin-app/settings.gradle.kts
+          templates/kotlin-app/build.gradle.kts
+          templates/kotlin-app/gradle.properties
+          templates/kotlin-app/gradlew
+          templates/kotlin-app/gradlew.bat
+          templates/kotlin-app/gradle/wrapper/gradle-wrapper.jar
+          templates/kotlin-app/gradle/wrapper/gradle-wrapper.properties
+          templates/kotlin-app/app/build.gradle.kts
+          templates/kotlin-app/app/proguard-rules.pro
+          templates/kotlin-app/app/src/main/AndroidManifest.xml
+          templates/kotlin-app/app/src/main/java/MainActivity.kt
+          templates/kotlin-app/app/src/main/res/drawable/ic_launcher.xml
+          templates/kotlin-app/app/src/main/res/values/strings.xml
+          templates/kotlin-app/app/src/main/res/values/themes.xml
+          templates/java-app/dot-github/workflows/build.yml
+          templates/java-app/dot-gitignore
+          templates/java-app/README.md
+          templates/java-app/settings.gradle.kts
+          templates/java-app/build.gradle.kts
+          templates/java-app/gradle.properties
+          templates/java-app/gradlew
+          templates/java-app/gradlew.bat
+          templates/java-app/gradle/wrapper/gradle-wrapper.jar
+          templates/java-app/gradle/wrapper/gradle-wrapper.properties
+          templates/java-app/app/build.gradle.kts
+          templates/java-app/app/proguard-rules.pro
+          templates/java-app/app/src/main/AndroidManifest.xml
+          templates/java-app/app/src/main/java/MainActivity.java
+          templates/java-app/app/src/main/res/drawable/ic_launcher.xml
+          templates/java-app/app/src/main/res/values/strings.xml
+          templates/java-app/app/src/main/res/values/themes.xml
+          templates/react-native-app/dot-github/workflows/build.yml
+          templates/react-native-app/dot-gitignore
+          templates/react-native-app/dot-watchmanconfig
+          templates/react-native-app/README.md
+          templates/react-native-app/package.json
+          templates/react-native-app/app.json
+          templates/react-native-app/index.js
+          templates/react-native-app/App.tsx
+          templates/react-native-app/babel.config.js
+          templates/react-native-app/metro.config.js
+          templates/react-native-app/android/settings.gradle
+          templates/react-native-app/android/build.gradle
+          templates/react-native-app/android/gradle.properties
+          templates/react-native-app/android/gradlew
+          templates/react-native-app/android/gradlew.bat
+          templates/react-native-app/android/gradle/wrapper/gradle-wrapper.jar
+          templates/react-native-app/android/gradle/wrapper/gradle-wrapper.properties
+          templates/react-native-app/android/app/build.gradle
+          templates/react-native-app/android/app/proguard-rules.pro
+          templates/react-native-app/android/app/debug.keystore
+          templates/react-native-app/android/app/src/main/AndroidManifest.xml
+          templates/react-native-app/android/app/src/main/java/MainActivity.kt
+          templates/react-native-app/android/app/src/main/java/MainApplication.kt
+          templates/react-native-app/android/app/src/main/res/drawable/ic_launcher.xml
+          templates/react-native-app/android/app/src/main/res/drawable/rn_edit_text_material.xml
+          templates/react-native-app/android/app/src/main/res/values/strings.xml
+          templates/react-native-app/android/app/src/main/res/values/styles.xml
+          templates/flutter-app/dot-github/workflows/build.yml
+          templates/flutter-app/dot-gitignore
+          templates/flutter-app/README.md
+          templates/flutter-app/pubspec.yaml
+          templates/flutter-app/analysis_options.yaml
+          templates/flutter-app/lib/main.dart
+          templates/flutter-app/android/dot-gitignore
+          templates/flutter-app/android/settings.gradle.kts
+          templates/flutter-app/android/build.gradle.kts
+          templates/flutter-app/android/gradle.properties
+          templates/flutter-app/android/gradle/wrapper/gradle-wrapper.properties
+          templates/flutter-app/android/app/build.gradle.kts
+          templates/flutter-app/android/app/src/main/AndroidManifest.xml
+          templates/flutter-app/android/app/src/debug/AndroidManifest.xml
+          templates/flutter-app/android/app/src/profile/AndroidManifest.xml
+          templates/flutter-app/android/app/src/main/kotlin/MainActivity.kt
+          templates/flutter-app/android/app/src/main/res/drawable/ic_launcher.xml
+          templates/flutter-app/android/app/src/main/res/drawable/launch_background.xml
+          templates/flutter-app/android/app/src/main/res/drawable-v21/launch_background.xml
+          templates/flutter-app/android/app/src/main/res/values/styles.xml
+          templates/flutter-app/android/app/src/main/res/values-night/styles.xml
+          EOF
+          if [ "$MISSING" = "0" ]; then
+            echo "All 34 template assets are present in the APK ✓"
+          else
+            exit 1
+          fi
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-debug
+          path: app/build/outputs/apk/debug/*.apk
