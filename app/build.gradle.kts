@@ -55,7 +55,15 @@ android {
     }
     packaging {
         resources {
-            excludes += "/META-INF/{AL2.0,LGPL2.1}"
+            excludes += "/META-INF/{AL2.0,LGPL2.1,LGPL3.0,GPL2.0,GPL3.0}"
+            // BouncyCastle (and friends) ship duplicate notice/license files
+            // and multi-release module-info that Android never loads.
+            excludes += "META-INF/DEPENDENCIES"
+            excludes += "META-INF/LICENSE.md"
+            excludes += "META-INF/LICENSE.txt"
+            excludes += "META-INF/NOTICE.md"
+            excludes += "META-INF/NOTICE.txt"
+            excludes += "META-INF/versions/**/module-info.class"
         }
     }
 }
