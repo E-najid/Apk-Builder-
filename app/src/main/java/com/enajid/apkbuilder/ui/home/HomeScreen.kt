@@ -22,6 +22,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.Logout
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.Delete
+import androidx.compose.material.icons.rounded.Key
 import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.rounded.RocketLaunch
 import androidx.compose.material.icons.rounded.Refresh
@@ -67,6 +68,7 @@ import com.enajid.apkbuilder.util.TimeUtils
 fun HomeScreen(
     onCreate: () -> Unit,
     onOpen: (owner: String, repo: String) -> Unit,
+    onKeystore: () -> Unit = {},
     viewModel: HomeViewModel = viewModel(),
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
@@ -98,6 +100,9 @@ fun HomeScreen(
                     }
                 },
                 actions = {
+                    IconButton(onClick = onKeystore) {
+                        Icon(Icons.Rounded.Key, contentDescription = "Release signing")
+                    }
                     IconButton(
                         onClick = { viewModel.load(showAsRefresh = true) },
                         enabled = !state.loading && !state.refreshing,

@@ -4,6 +4,7 @@ import android.content.Context
 import android.os.SystemClock
 import com.enajid.apkbuilder.data.ai.AiDebugLog
 import com.enajid.apkbuilder.data.ai.AiProfilesStore
+import com.enajid.apkbuilder.data.signing.KeystoreManager
 import kotlinx.serialization.json.Json
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
@@ -31,6 +32,7 @@ class AppContainer(context: Context) {
     // The AI agent's user-configured model profiles + skills, stored as JSON
     // in app-private DataStore (no database anywhere).
     val aiProfilesStore = AiProfilesStore(context)
+    val keystoreManager = KeystoreManager(context)
 
     private val json = Json {
         ignoreUnknownKeys = true
@@ -64,7 +66,10 @@ class AppContainer(context: Context) {
     val gitRepository = GitRepository(gitHubApi)
     val actionsRepository = ActionsRepository(gitHubApi)
     val projectCreator = ProjectCreator(projectsRepository, gitRepository, templateEngine)
-    val buildOrchestrator = BuildOrchestrator(gitRepository, actionsRepository, localProjectStore)
+    val buildOrchestrator = BuildOrchestrator(
+        gitRepository, actionsRepository, localProjectStore,
+        keystoreManager, templateEngine,
+    )
 
     /**
      * Retries a request a couple of times when the connection itself fails

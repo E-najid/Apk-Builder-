@@ -402,6 +402,13 @@ private fun ApkReadyCard(
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+                state.artifactExpiresInDays?.let { days ->
+                    Text(
+                        "⏳ ~$days দিন পর্যন্ত GitHub-এ থাকবে (90 দিন পরে artifact মুছে যায়)",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
             }
             state.elapsedMs?.let {
                 Text(

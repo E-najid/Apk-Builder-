@@ -1,5 +1,6 @@
 package com.enajid.apkbuilder.data
 
+import com.enajid.apkbuilder.data.signing.KeystoreManager
 import com.enajid.apkbuilder.domain.Toolchain
 import com.enajid.apkbuilder.domain.ToolchainDetector
 import kotlinx.coroutines.CancellationException
@@ -18,6 +19,8 @@ class BuildOrchestrator(
     private val gitRepository: GitRepository,
     private val actionsRepository: ActionsRepository,
     private val localProjectStore: LocalProjectStore,
+    private val keystoreManager: KeystoreManager,
+    private val templateEngine: TemplateEngine,
 ) {
 
     data class TriggerResult(
@@ -30,17 +33,26 @@ class BuildOrchestrator(
         val paths = gitRepository.listFiles(owner, repo, branch).map { it.path } + dirty.keys
         val toolchains = ToolchainDetector.detect(paths)
 
-        val commitSha = if (dirty.isNotEmpty()) {
+        // When a signing keystore is active, its files ride along into the
+        // repo (and the workflow template is refreshed) so the release job
+        // can sign. Signing changes alone are enough to trigger a build.
+        val signing = keystoreManager.signingFiles()
+        val commitSha = if (dirty.isNotEmpty() || signing != null) {
             val files = dirty.map { (path, content) ->
                 TemplateRenderer.RenderedFile(path, content.toByteArray(Charsets.UTF_8))
-            }
+            } + (signing ?: emptyList()) +
+                (signing?.let { listOf(templateEngine.workflowFile()) } ?: emptyList())
             gitRepository.pushFiles(
                 owner = owner,
                 repo = repo,
                 branch = branch,
                 files = files,
                 deletions = emptyList(),
-                message = "Update code from APK Builder",
+                message = if (dirty.isNotEmpty()) {
+                    "Update code from APK Builder"
+                } else {
+                    "Set up release signing from APK Builder"
+                },
             )
         } else {
             gitRepository.createEmptyCommit(

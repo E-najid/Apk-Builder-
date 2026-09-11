@@ -58,6 +58,7 @@ class BuildStatusViewModel(
         val artifactName: String? = null,
         val artifactSizeBytes: Long? = null,
         val artifactExpired: Boolean = false,
+        val artifactExpiresInDays: Int? = null,
         val downloading: Boolean = false,
         val downloaded: DownloadedApk? = null,
         val error: String? = null,
@@ -140,7 +141,10 @@ class BuildStatusViewModel(
                     if (fresh.status == "completed") {
                         if (fresh.conclusion == "success") {
                             val artifacts = actions.getArtifacts(owner, repo, run.id)
-                            val artifact = artifacts.firstOrNull { !it.expired } ?: artifacts.firstOrNull()
+                            // Prefer the signed release APK; fall back to debug.
+                            val artifact = artifacts.firstOrNull { it.name == "app-release" && !it.expired }
+                                ?: artifacts.firstOrNull { !it.expired }
+                                ?: artifacts.firstOrNull()
                             _state.update {
                                 it.copy(
                                     phase = Phase.SUCCESS,
@@ -148,6 +152,7 @@ class BuildStatusViewModel(
                                     artifactName = artifact?.name,
                                     artifactSizeBytes = artifact?.size_in_bytes,
                                     artifactExpired = artifact != null && artifact.expired,
+                                    artifactExpiresInDays = artifact?.created_at?.let { daysLeft(it) },
                                     elapsedMs = elapsedMs(fresh, jobs),
                                 )
                             }
@@ -174,6 +179,15 @@ class BuildStatusViewModel(
     }
 
     /** Fetches the artifact zip, extracts the APK and stages it for install/share. */
+    /** GitHub keeps artifacts ~90 days; tell the user what's left. */
+    private fun daysLeft(iso: String): Int? = runCatching {
+        val format = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", java.util.Locale.US)
+        format.timeZone = java.util.TimeZone.getTimeZone("UTC")
+        val created = format.parse(iso)?.time ?: return@runCatching null
+        ((created + 90L * 24 * 60 * 60 * 1000 - System.currentTimeMillis()) / (24 * 60 * 60 * 1000L))
+            .toInt().coerceAtLeast(0)
+    }.getOrNull()
+
     fun downloadApk() {
         val artifactId = _state.value.artifactId ?: return
         viewModelScope.launch(Dispatchers.IO) {

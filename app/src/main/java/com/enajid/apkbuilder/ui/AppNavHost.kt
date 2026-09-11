@@ -20,6 +20,7 @@ import com.enajid.apkbuilder.ui.components.ScreenLoading
 import com.enajid.apkbuilder.ui.createproject.CreateProjectScreen
 import com.enajid.apkbuilder.ui.editor.EditorScreen
 import com.enajid.apkbuilder.ui.home.HomeScreen
+import com.enajid.apkbuilder.ui.keystore.KeystoreScreen
 import com.enajid.apkbuilder.ui.onboarding.SignInScreen
 import com.enajid.apkbuilder.ui.onboarding.WelcomeScreen
 
@@ -27,6 +28,7 @@ object Routes {
     const val WELCOME = "welcome"
     const val SIGNIN = "signin"
     const val HOME = "home"
+    const val KEYSTORE = "keystore"
     const val CREATE = "create"
     const val EDITOR = "editor/{owner}/{repo}"
     const val BUILD = "build/{owner}/{repo}"
@@ -80,7 +82,11 @@ private fun ApkBuilderNavHost(navController: NavHostController, startDestination
             HomeScreen(
                 onCreate = { navController.navigate(Routes.CREATE) },
                 onOpen = { owner, repo -> navController.navigate(Routes.editor(owner, repo)) },
+                onKeystore = { navController.navigate(Routes.KEYSTORE) },
             )
+        }
+        composable(Routes.KEYSTORE) {
+            KeystoreScreen(onBack = { navController.popBackStack() })
         }
         composable(Routes.CREATE) {
             CreateProjectScreen(

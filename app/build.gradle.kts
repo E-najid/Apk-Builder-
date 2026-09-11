@@ -86,6 +86,10 @@ dependencies {
     // QR codes for sharing the build page
     implementation(libs.zxing.core)
 
+    // Creating self-signed release-signing keystores on device
+    implementation(libs.bouncycastle.bcprov)
+    implementation(libs.bouncycastle.bcpkix)
+
     testImplementation(libs.junit)
     debugImplementation(libs.androidx.compose.ui.tooling)
 }
