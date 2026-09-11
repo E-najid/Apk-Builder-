@@ -143,6 +143,11 @@ fun AgentSheet(
                     Text("AI Agent", style = MaterialTheme.typography.titleMedium)
                     ModelsSummaryLine(state)
                 }
+                if (state.messages.isNotEmpty() && !state.busy) {
+                    TextButton(onClick = { viewModel.clearChat() }) {
+                        Text("নতুন চ্যাট", style = MaterialTheme.typography.labelSmall)
+                    }
+                }
                 IconButton(onClick = { showDebug = !showDebug }) {
                     Icon(
                         Icons.Rounded.BugReport,
@@ -210,7 +215,7 @@ fun AgentSheet(
                                 CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 2.dp)
                                 Spacer(Modifier.width(8.dp))
                                 Text(
-                                    "Agent কাজ করছে…",
+                                    if (state.streamingBubbleId != null) "লিখছে…" else "Agent কাজ করছে…",
                                     style = MaterialTheme.typography.labelSmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
@@ -380,7 +385,7 @@ private fun AgentBubbleRow(bubble: AgentBubble) {
             ) {
                 SelectionContainer {
                     Text(
-                        bubble.text,
+                        if (bubble.streaming) bubble.text + " ▍" else bubble.text,
                         Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
                         style = MaterialTheme.typography.bodySmall,
                     )
@@ -659,6 +664,9 @@ private fun ProfileDialog(
     val context = LocalContext.current
     val clipboard = LocalClipboardManager.current
 
+    val isFirstProfile = initial == null && state.profiles.isEmpty()
+    LaunchedEffect(Unit) { /* model lists are per-provider; never show stale ones */ }
+
     var providerId by remember { mutableStateOf(initial?.providerId ?: ProviderPresets.OPENROUTER.id) }
     var baseUrl by remember { mutableStateOf(initial?.baseUrl ?: ProviderPresets.OPENROUTER.baseUrl) }
     var apiKey by remember { mutableStateOf(initial?.apiKey ?: "") }
@@ -810,9 +818,11 @@ private fun ProfileDialog(
                 )
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     ModelRole.entries.forEach { r ->
+                        val blockedForFirst = isFirstProfile && r != ModelRole.CODER
                         FilterChip(
                             selected = role == r,
-                            onClick = { role = r },
+                            enabled = !blockedForFirst,
+                            onClick = { if (!blockedForFirst) role = r },
                             label = {
                                 Text(
                                     when (r) {
@@ -827,10 +837,11 @@ private fun ProfileDialog(
                     }
                 }
                 Text(
-                    when (role) {
-                        ModelRole.CODER -> "মূল কোড লেখে (একটাই Coder থাকতে পারে)"
-                        ModelRole.REVIEWER -> "Coder-এর কাজ একবার দেখে ভুল ধরে"
-                        ModelRole.FALLBACK -> "আগের model fail করলে এটা এগিয়ে যায়"
+                    when {
+                        isFirstProfile -> "প্রথম model টা Coder হতেই হবে — Reviewer/Fallback পরে যোগ কোরো"
+                        role == ModelRole.CODER -> "মূল কোড লেখে (একটাই Coder থাকতে পারে)"
+                        role == ModelRole.REVIEWER -> "Coder-এর কাজ একবার দেখে ভুল ধরে"
+                        else -> "আগের model fail করলে এটা এগিয়ে যায়"
                     },
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,

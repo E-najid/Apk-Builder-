@@ -22,6 +22,13 @@ import kotlin.coroutines.resumeWithException
 /** The single operation the agent loop needs from a chat backend. */
 interface ChatApi {
     suspend fun chat(request: ChatRequest): ChatResponse
+
+    /**
+     * Streaming variant: emits text deltas as they arrive and returns the
+     * fully assembled response. Default = plain chat (no live deltas).
+     */
+    suspend fun chatStream(request: ChatRequest, onDelta: (String) -> Unit): ChatResponse =
+        chat(request)
 }
 
 class AiException(message: String) : Exception(message)
@@ -78,6 +85,9 @@ class ProviderChatClient(
 
         val response = try {
             client.newCall(httpRequest).await()
+        } catch (e: java.net.SocketTimeoutException) {
+            AiDebugLog.error("http", "✗ timeout after ${System.currentTimeMillis() - startedAt}ms: $url", e)
+            throw AiException("provider অনেক সময় নিচ্ছে (timeout) — আবার চেষ্টা করো বা অন্য model দাও।")
         } catch (e: IOException) {
             AiDebugLog.error("http", "✗ network error after ${System.currentTimeMillis() - startedAt}ms: $url", e)
             throw AiException(
@@ -115,6 +125,93 @@ class ProviderChatClient(
             decoded
         }
     }
+
+    /**
+     * SSE streaming chat: reads "data: {...}" chunks, emits content deltas
+     * live and assembles the same ChatResponse shape chat() returns
+     * (content + tool_calls accumulated across chunks).
+     */
+    override suspend fun chatStream(request: ChatRequest, onDelta: (String) -> Unit): ChatResponse =
+        withContext(Dispatchers.IO) {
+            val streamed = request.copy(stream = true)
+            val httpRequest = Request.Builder()
+                .url(baseUrl.trimEnd('/') + "/chat/completions")
+                .header("Authorization", "Bearer $apiKey")
+                .header("X-Title", "APK Builder")
+                .post(json.encodeToString(ChatRequest.serializer(), streamed).toRequestBody("application/json".toMediaType()))
+                .build()
+            AiDebugLog.info("http", "→ POST /chat/completions (stream) · model=${request.model}")
+            val startedAt = System.currentTimeMillis()
+            val response = try {
+                client.newCall(httpRequest).await()
+            } catch (e: IOException) {
+                throw AiException("provider-এ পৌঁছানো যাচ্ছে না ($baseUrl) — internet ও base URL দেখো।")
+            }
+            response.use {
+                if (!it.isSuccessful) {
+                    val text = it.body?.string().orEmpty()
+                    AiDebugLog.warn("http", "← HTTP ${it.code} in ${System.currentTimeMillis() - startedAt}ms", details = text.take(600))
+                    throw AiException(friendlyHttp(it.code, text))
+                }
+                val content = StringBuilder()
+                val toolAcc = mutableMapOf<Int, Pair<String, StringBuilder>>() // index -> (name, args)
+                val toolIds = mutableMapOf<Int, String>()
+                val toolOrder = mutableListOf<Int>()
+                it.body?.charStream()?.buffered()?.useLines { lines ->
+                    for (raw in lines) {
+                        val line = raw.trim()
+                        if (!line.startsWith("data:")) continue
+                        val payload = line.removePrefix("data:").trim()
+                        if (payload == "[DONE]") break
+                        val chunk = runCatching {
+                            json.decodeFromString(StreamChunk.serializer(), payload)
+                        }.getOrNull() ?: continue
+                        val delta = chunk.choices?.firstOrNull()?.delta ?: continue
+                        delta.content?.let { piece ->
+                            if (piece.isNotEmpty()) {
+                                content.append(piece)
+                                onDelta(piece)
+                            }
+                        }
+                        delta.tool_calls?.forEach { tc ->
+                            val index = tc.index ?: 0
+                            if (index !in toolAcc) {
+                                toolAcc[index] = (tc.function?.name ?: "") to StringBuilder()
+                                toolOrder += index
+                            }
+                            tc.id?.let { id -> toolIds[index] = id }
+                            tc.function?.name?.takeIf { it.isNotBlank() }?.let { name ->
+                                toolAcc[index] = name to toolAcc[index]!!.second
+                            }
+                            tc.function?.arguments?.let { toolAcc[index]!!.second.append(it) }
+                        }
+                    }
+                }
+                AiDebugLog.ok(
+                    "http",
+                    "← stream done in ${System.currentTimeMillis() - startedAt}ms · text ${content.length} chars · ${toolAcc.size} tool call(s)",
+                )
+                ChatResponse(
+                    choices = listOf(
+                        Choice(
+                            message = AssistantMessage(
+                                content = content.toString().ifBlank { null },
+                                tool_calls = toolOrder.sorted().map { index ->
+                                    ToolCall(
+                                        id = toolIds[index] ?: "call_$index",
+                                        function = FunctionCall(
+                                            name = toolAcc[index]!!.first,
+                                            arguments = toolAcc[index]!!.second.toString().ifBlank { "{}" },
+                                        ),
+                                    )
+                                }.takeIf { it.isNotEmpty() },
+                            ),
+                            finish_reason = if (toolAcc.isEmpty()) "stop" else "tool_calls",
+                        )
+                    ),
+                )
+            }
+        }
 
     /** Model ids for the picker in the setup dialog. */
     suspend fun listModels(): List<String> = withContext(Dispatchers.IO) {
@@ -190,7 +287,7 @@ class ProviderChatClient(
         // LLM answers can take a while; long read timeout on purpose.
         private val client = OkHttpClient.Builder()
             .connectTimeout(15, TimeUnit.SECONDS)
-            .readTimeout(300, TimeUnit.SECONDS)
+            .readTimeout(120, TimeUnit.SECONDS)
             .writeTimeout(60, TimeUnit.SECONDS)
             .build()
     }

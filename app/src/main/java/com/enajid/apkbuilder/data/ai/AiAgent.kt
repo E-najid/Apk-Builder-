@@ -20,6 +20,9 @@ interface AgentProjectAccess {
 }
 
 sealed interface AgentEvent {
+    /** Live text piece as it streams in (also used for the final answer). */
+    data class TextDelta(val text: String) : AgentEvent
+
     /** Interim text the model produced while working ("Let me check …"). */
     data class AssistantText(val text: String) : AgentEvent
 
@@ -38,7 +41,11 @@ data class AgentResult(val finalText: String?, val steps: Int)
  * what a "write" means (in APK Builder: an editable draft, never a direct
  * push, so the user always reviews before anything reaches GitHub).
  */
-class AiAgent(private val api: ChatApi, private val project: AgentProjectAccess) {
+class AiAgent(
+    private val api: ChatApi,
+    private val project: AgentProjectAccess,
+    private val maxSteps: Int = MAX_STEPS,
+) {
 
     fun tools(): List<ToolSpec> = listOf(
         ToolSpec(
@@ -94,10 +101,14 @@ class AiAgent(private val api: ChatApi, private val project: AgentProjectAccess)
         messages += ChatMessage(role = "user", content = userMessage)
 
         var step = 0
-        while (step < MAX_STEPS) {
-            val response = api.chat(
+        while (step < maxSteps) {
+            var streamedThisCall = false
+            val response = api.chatStream(
                 ChatRequest(model = model, messages = messages.toList(), tools = tools())
-            )
+            ) { delta ->
+                streamedThisCall = true
+                onEvent(AgentEvent.TextDelta(delta))
+            }
             val choice = response.choices.firstOrNull()
             if (choice == null) {
                 AiDebugLog.error("agent", "provider উত্তরে কোনো choice পাঠায়নি (step ${step + 1})")
@@ -115,11 +126,11 @@ class AiAgent(private val api: ChatApi, private val project: AgentProjectAccess)
             if (toolCalls.isNotEmpty()) {
                 AiDebugLog.info(
                     "agent",
-                    "step ${step + 1}/$MAX_STEPS: ${toolCalls.size} tool call(s)" +
+                    "step ${step + 1}/$maxSteps: ${toolCalls.size} tool call(s)" +
                         (assistant.content?.takeIf { it.isNotBlank() }?.let { ", note ${it.length} ch" } ?: ""),
                 )
                 assistant.content?.takeIf { it.isNotBlank() }?.let {
-                    onEvent(AgentEvent.AssistantText(it))
+                    if (!streamedThisCall) onEvent(AgentEvent.TextDelta(it))
                 }
             } else {
                 val final = assistant.content?.takeIf { it.isNotBlank() }
@@ -136,6 +147,7 @@ class AiAgent(private val api: ChatApi, private val project: AgentProjectAccess)
                             "⚙ setup-এ গিয়ে অন্য একটা model দিয়ে দেখো। বিস্তারিত 🐞 debug এ।"
                     )
                 }
+                if (!streamedThisCall) onEvent(AgentEvent.TextDelta(final))
                 return AgentResult(final, step + 1)
             }
 
@@ -161,7 +173,7 @@ class AiAgent(private val api: ChatApi, private val project: AgentProjectAccess)
             }
             step++
         }
-        AiDebugLog.warn("agent", "ধাপ সীমা ($MAX_STEPS) শেষ — কাজ অসম্পূর্ণ থেমে গেল")
+        AiDebugLog.warn("agent", "ধাপ সীমা ($maxSteps) শেষ — কাজ অসম্পূর্ণ থেমে গেল")
         return AgentResult(null, step)
     }
 
@@ -211,7 +223,7 @@ class AiAgent(private val api: ChatApi, private val project: AgentProjectAccess)
         (this[name] as? JsonPrimitive)?.contentOrNull
 
     companion object {
-        const val MAX_STEPS = 10
+        const val MAX_STEPS = 25
         const val MAX_READ_CHARS = 6000
     }
 }

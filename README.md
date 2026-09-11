@@ -221,6 +221,19 @@ highlighting, line numbers, cursor position display, auto-indent on Enter,
 unsaved-changes indicator with crash-safe local persistence, and smart
 back-navigation ("save & leave / discard").
 
+## Release signing (optional)
+
+Home → 🔑: create a self-signed keystore on the phone or import one made
+elsewhere (`.jks`/`.p12` + passwords + alias). The active keystore is pushed
+to every app repo (`signing/`), and the generated workflow adds a release
+job: `assembleRelease` + `apksigner` → **signed `app-release` artifact**,
+which the build screen downloads automatically. Updates signed with the same
+key install over each other. Note: GitHub's secrets API isn't available with
+this OAuth token, so signing material lives in the (public) app repo — fine
+for hobby apps, use a private repo for serious publishing. Keystore passwords
+are encrypted at rest on the phone with a hardware-backed Android Keystore
+key.
+
 ## AI coding agent (bring your own provider)
 
 The editor has a built-in coding agent (✨ button): you describe a feature or
@@ -236,7 +249,8 @@ backend of ours, and requests go straight from the phone to the provider.
 
 **Multi-model teamwork.** You can add 2–4 models and give each a job:
 
-- **Coder** — the main model that runs the tool loop (read/write files).
+- **Coder** — the main model that runs the tool loop (read/write files),
+  with answers **streamed live** into the chat (SSE).
 - **Reviewer** — after the coder finishes, this model inspects the changed
   files once; if it finds concrete issues they go back to the coder for a fix
   round (a broken reviewer never loses the coder's work).

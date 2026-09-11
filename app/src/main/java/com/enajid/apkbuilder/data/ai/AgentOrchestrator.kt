@@ -21,12 +21,18 @@ class FallbackChatApi(
 
     private fun label(index: Int) = labels.getOrNull(index) ?: "provider ${index + 1}"
 
-    override suspend fun chat(request: ChatRequest): ChatResponse {
+    override suspend fun chat(request: ChatRequest): ChatResponse =
+        chatStream(request) {}
+
+    override suspend fun chatStream(
+        request: ChatRequest,
+        onDelta: (String) -> Unit,
+    ): ChatResponse {
         val failures = mutableListOf<String>()
         for (offset in clients.indices) {
             val index = (preferred + offset) % clients.size
             try {
-                val response = clients[index].chat(request)
+                val response = clients[index].chatStream(request, onDelta)
                 if (offset > 0) {
                     AiDebugLog.warn("fallback", "${label(index)} fallback হিসেবে কাজ করছে ✓")
                 }

@@ -73,7 +73,7 @@ class AiAgentTest {
         assertTrue(toolMsg.content!!.contains("ok: wrote"))
 
         // Interim narration and tool activity surfaced as events.
-        assertTrue(events.any { it is AgentEvent.AssistantText && it.text == "Creating the file" })
+        assertTrue(events.any { it is AgentEvent.TextDelta && it.text == "Creating the file" })
         assertTrue(events.any { it is AgentEvent.ToolActivity && it.label.contains("Tip.kt") })
 
         // The first request ends with the user message.
@@ -101,6 +101,48 @@ class AiAgentTest {
 
         val toolMsg = api.requests[1].messages.first { it.role == "tool" }
         assertTrue(toolMsg.content!!.contains("error"))
+    }
+
+    @Test
+    fun `streamed text arrives as deltas without duplication`() = runBlocking {
+        val write = ChatResponse(
+            choices = listOf(
+                Choice(
+                    message = AssistantMessage(
+                        tool_calls = listOf(toolCall("c1", "read_file", """{"path":"app/build.gradle.kts"}""")
+                    )
+                )
+            )
+        )
+        val final = ChatResponse(
+            choices = listOf(Choice(message = AssistantMessage(content = "All done")))
+        )
+        var call = 0
+        val api = object : ChatApi {
+            override suspend fun chat(request: ChatRequest): ChatResponse =
+                error("should use streaming")
+
+            override suspend fun chatStream(
+                request: ChatRequest,
+                onDelta: (String) -> Unit,
+            ): ChatResponse {
+                call++
+                return if (call == 1) write else {
+                    onDelta("All ")
+                    onDelta("done")
+                    final
+                }
+            }
+        }
+        val events = mutableListOf<AgentEvent>()
+        val result = AiAgent(api, FakeProject()).run("m", "s", emptyList(), "x") { events += it }
+
+        assertEquals("All done", result.finalText)
+        // both delta pieces surfaced live
+        assertTrue(events.any { it is AgentEvent.TextDelta && it.text == "All " })
+        assertTrue(events.any { it is AgentEvent.TextDelta && it.text == "done" })
+        // the assembled final text is NOT re-emitted as a delta
+        assertTrue(events.none { it is AgentEvent.TextDelta && it.text == "All done" })
     }
 
     @Test

@@ -71,6 +71,7 @@ class EditorViewModel(
         val fromUser: Boolean,
         val text: String,
         val kind: Kind = Kind.TEXT,
+        val streaming: Boolean = false,
     ) {
         enum class Kind { TEXT, TOOL, ERROR }
     }
@@ -94,6 +95,8 @@ class EditorViewModel(
         /** Live AI debug log for the 🐞 pane. */
         val debugEntries: List<AiDebugLog.Entry> = emptyList(),
         val testRunning: Boolean = false,
+        /** Bubble currently receiving streamed text, if any. */
+        val streamingBubbleId: Long? = null,
     ) {
         val hasCoder: Boolean get() = profiles.any { it.enabled && it.role == ModelRole.CODER }
     }
@@ -127,6 +130,25 @@ class EditorViewModel(
     private var bubbleId = 0L
     private val agentHistory = mutableListOf<ChatMessage>()
     private var gradleInfo: String? = null
+    /** Remembered file contents so re-opening doesn't hit GitHub every time. */
+    private val fileCache = LinkedHashMap<String, String>()
+    /** Sticky fallback chain — survives between messages, rebuilt on config change. */
+    private var cachedChain: FallbackChatApi? = null
+    private var cachedChainSig: String? = null
+
+    private fun chatApiFor(chain: List<ModelProfile>): FallbackChatApi {
+        val sig = chain.joinToString("|") {
+            "${it.id}:${it.baseUrl}:${it.model}:${it.apiKey.takeLast(6)}"
+        }
+        if (cachedChainSig != sig || cachedChain == null) {
+            cachedChain = FallbackChatApi(
+                clients = chain.map { ProviderChatClient(it) },
+                labels = chain.map { it.summary },
+            )
+            cachedChainSig = sig
+        }
+        return cachedChain!!
+    }
 
     init {
         load()
@@ -174,11 +196,13 @@ class EditorViewModel(
                 _state.update {
                     it.copy(selectedPath = path, fileLoading = true, selectedIsBinary = false)
                 }
-                val cached = dirtyContents[path]
+                val draft = dirtyContents[path]
                 val content: String
                 var binary = false
-                if (cached != null) {
-                    content = cached
+                if (draft != null) {
+                    content = draft
+                } else if (fileCache.containsKey(path)) {
+                    content = fileCache[path]!!
                 } else {
                     val bytes = git.readFile(owner, repo, branch, path)
                     if (bytes.contains(0.toByte())) {
@@ -186,6 +210,8 @@ class EditorViewModel(
                         content = ""
                     } else {
                         content = String(bytes, Charsets.UTF_8)
+                        fileCache[path] = content
+                        while (fileCache.size > 20) fileCache.remove(fileCache.keys.first())
                     }
                 }
                 _state.update { it.copy(fileLoading = false, selectedIsBinary = binary) }
@@ -384,8 +410,22 @@ class EditorViewModel(
         }
 
         override suspend fun writeFile(path: String, content: String) {
+            val hadLocalEdits = dirtyContents.containsKey(path) &&
+                dirtyContents[path] != content
             dirtyContents[path] = content
+            fileCache.remove(path)
             withContext(Dispatchers.IO) { localStore.markDirty(owner, repo, path, content) }
+            if (hadLocalEdits) {
+                _agent.update { s ->
+                    s.copy(
+                        messages = s.messages + bubble(
+                            false,
+                            "⚠ $path-এ তোমার unsaved লেখা ছিল — agent-এর নতুন সংস্করণটা বসানো হলো। আগেরটা ফিরিয়ে আনতে Build আগের সংস্করণ নাও (editor-এ Undo নেই এখনো)",
+                            AgentBubble.Kind.TOOL,
+                        )
+                    )
+                }
+            }
             if (_state.value.selectedPath == path) {
                 val revision = (_selectedFile.value?.revision ?: 0) + 1
                 _selectedFile.value = LoadedFile(path, content, false, revision)
@@ -689,6 +729,23 @@ class EditorViewModel(
         agentJob?.cancel()
     }
 
+    fun clearChat() {
+        agentHistory.clear()
+        _agent.update { it.copy(messages = emptyList(), streamingBubbleId = null) }
+    }
+
+    private fun finalizeStreamingBubble() {
+        _agent.update { s ->
+            if (s.streamingBubbleId == null) s
+            else s.copy(
+                streamingBubbleId = null,
+                messages = s.messages.map {
+                    if (it.id == s.streamingBubbleId) it.copy(streaming = false) else it
+                },
+            )
+        }
+    }
+
     fun sendAgentMessage(message: String, selectedPath: String?, selectedCode: String?) {
         val text = message.trim()
         if (text.isEmpty() || _agent.value.busy) return
@@ -707,18 +764,17 @@ class EditorViewModel(
             try {
                 val reviewer = enabled.firstOrNull { it.role == ModelRole.REVIEWER }
                 val fallbacks = enabled.filter { it.role == ModelRole.FALLBACK }
-                // The chat chain: coder first, then reviewer, then fallbacks.
-                val chain = listOfNotNull(coder, reviewer) + fallbacks
-                val chat = FallbackChatApi(
-                    clients = chain.map { ProviderChatClient(it) },
-                    labels = chain.map { it.summary },
-                )
+                // The coder chain: coder + fallbacks (NOT the reviewer — it
+                // must stay a reviewer, not a backup coder).
+                val chain = listOf(coder) + fallbacks
+                val chat = chatApiFor(chain)
                 val agent = MultiModelAgent(
                     chat = chat,
                     reviewer = reviewer?.let { ProviderChatClient(it) },
                     reviewerModel = reviewer?.model,
                 )
                 val system = buildSystemPrompt(selectedPath, selectedCode)
+                var streamedAny = false
                 val result = agent.run(
                     model = coder.model,
                     systemPrompt = system,
@@ -727,27 +783,51 @@ class EditorViewModel(
                     project = projectAccess,
                 ) { event ->
                     when (event) {
-                        is AgentEvent.AssistantText -> _agent.update { s ->
-                            s.copy(messages = s.messages + bubble(false, event.text))
+                        is AgentEvent.TextDelta -> {
+                            streamedAny = true
+                            _agent.update { s ->
+                            val sid = s.streamingBubbleId
+                            if (sid == null) {
+                                val b = bubble(false, event.text, streaming = true)
+                                s.copy(messages = s.messages + b, streamingBubbleId = b.id)
+                            } else {
+                                s.copy(messages = s.messages.map {
+                                    if (it.id == sid) it.copy(text = it.text + event.text) else it
+                                })
+                            }
+                            }
                         }
-                        is AgentEvent.ToolActivity -> _agent.update { s ->
-                            s.copy(messages = s.messages + bubble(false, event.label, AgentBubble.Kind.TOOL))
+                        is AgentEvent.AssistantText -> {
+                            finalizeStreamingBubble()
+                            _agent.update { s ->
+                                s.copy(messages = s.messages + bubble(false, event.text))
+                            }
+                        }
+                        is AgentEvent.ToolActivity -> {
+                            finalizeStreamingBubble()
+                            _agent.update { s ->
+                                s.copy(messages = s.messages + bubble(false, event.label, AgentBubble.Kind.TOOL))
+                            }
                         }
                     }
                 }
+                finalizeStreamingBubble()
                 val finalText = result.finalText
                     ?: "ধাপ সীমা শেষ — এখন পর্যন্ত যা হয়েছে দেখে আবার বলো।"
                 if (result.finalText != null) {
                     agentHistory += ChatMessage(role = "user", content = text)
                     agentHistory += ChatMessage(role = "assistant", content = finalText)
+                    // Keep the conversation bounded: newest 16 messages stay.
+                    while (agentHistory.size > 16) agentHistory.removeAt(0)
                 }
                 AiDebugLog.ok("chat", "কাজ শেষ (${result.steps} steps)")
                 _agent.update {
                     it.copy(
                         busy = false,
-                        messages = it.messages +
-                            bubble(false, finalText) +
-                            bubble(false, "বদলগুলো draft হিসেবে এডিটরে বসেছে — Save → Build চেপে দেখো", AgentBubble.Kind.TOOL),
+                        messages = it.messages + buildList {
+                            if (!streamedAny) add(bubble(false, finalText))
+                            add(bubble(false, "বদলগুলো draft হিসেবে এডিটরে বসেছে — Save → Build চেপে দেখো", AgentBubble.Kind.TOOL))
+                        },
                     )
                 }
             } catch (e: CancellationException) {
@@ -826,6 +906,10 @@ class EditorViewModel(
         }
     }
 
-    private fun bubble(fromUser: Boolean, text: String, kind: AgentBubble.Kind = AgentBubble.Kind.TEXT) =
-        AgentBubble(id = ++bubbleId, fromUser = fromUser, text = text, kind = kind)
+    private fun bubble(
+        fromUser: Boolean,
+        text: String,
+        kind: AgentBubble.Kind = AgentBubble.Kind.TEXT,
+        streaming: Boolean = false,
+    ) = AgentBubble(id = ++bubbleId, fromUser = fromUser, text = text, kind = kind, streaming = streaming)
 }

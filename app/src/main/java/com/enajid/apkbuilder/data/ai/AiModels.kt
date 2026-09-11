@@ -79,6 +79,35 @@ data class ChatResponse(
 )
 
 @Serializable
+data class StreamChunk(
+    val choices: List<StreamChoice>? = null,
+)
+
+@Serializable
+data class StreamChoice(
+    val delta: StreamDelta? = null,
+)
+
+@Serializable
+data class StreamDelta(
+    val content: String? = null,
+    val tool_calls: List<StreamToolCall>? = null,
+)
+
+@Serializable
+data class StreamToolCall(
+    val index: Int? = null,
+    val id: String? = null,
+    val function: StreamFunctionCall? = null,
+)
+
+@Serializable
+data class StreamFunctionCall(
+    val name: String? = null,
+    val arguments: String? = null,
+)
+
+@Serializable
 data class ModelId(val id: String = "", val owned_by: String? = null)
 
 @Serializable
