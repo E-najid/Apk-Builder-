@@ -64,6 +64,12 @@ android {
             excludes += "META-INF/NOTICE.md"
             excludes += "META-INF/NOTICE.txt"
             excludes += "META-INF/versions/**/module-info.class"
+            excludes += "META-INF/INDEX.LIST"
+            excludes += "META-INF/*.SF"
+            excludes += "META-INF/*.RSA"
+            excludes += "META-INF/*.DSA"
+            // Any remaining duplicate META-INF resource: first one wins.
+            pickFirsts += "META-INF/**"
         }
     }
 }
