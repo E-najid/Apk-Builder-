@@ -134,7 +134,8 @@ class TemplateRendererTest {
             "$root/android/app/debug.keystore" to "x\n".toByteArray(),
             "$root/android/app/proguard-rules.pro" to "x\n".toByteArray(),
             "$root/android/app/src/main/AndroidManifest.xml" to "x\n".toByteArray(),
-            "$root/android/app/src/main/java/MainActivity.kt" to "x\n".toByteArray(),
+            "$root/android/app/src/main/java/MainActivity.kt" to
+                "package {{PACKAGE_NAME}}\nclass MainActivity { val n = \"{{APP_JS_NAME}}\" }\n".toByteArray(),
             "$root/android/app/src/main/java/MainApplication.kt" to "x\n".toByteArray(),
             "$root/android/app/src/main/res/drawable/ic_launcher.xml" to "x\n".toByteArray(),
             "$root/android/app/src/main/res/drawable/rn_edit_text_material.xml" to "x\n".toByteArray(),
@@ -147,7 +148,8 @@ class TemplateRendererTest {
             "$root/android/gradlew" to "x\n".toByteArray(),
             "$root/android/gradlew.bat" to "x\n".toByteArray(),
             "$root/android/settings.gradle" to "x\n".toByteArray(),
-            "$root/app.json" to "x\n".toByteArray(),
+            "$root/app.json" to
+                "{\"name\": \"{{APP_JS_NAME}}\", \"displayName\": \"{{APP_NAME}}\"}\n".toByteArray(),
             "$root/babel.config.js" to "x\n".toByteArray(),
             "$root/dot-github/workflows/build.yml" to "x\n".toByteArray(),
             "$root/dot-gitignore" to "x\n".toByteArray(),
@@ -193,7 +195,8 @@ class TemplateRendererTest {
             "$root/analysis_options.yaml" to "x\n".toByteArray(),
             "$root/android/app/build.gradle.kts" to "x\n".toByteArray(),
             "$root/android/app/src/debug/AndroidManifest.xml" to "x\n".toByteArray(),
-            "$root/android/app/src/main/AndroidManifest.xml" to "x\n".toByteArray(),
+            "$root/android/app/src/main/AndroidManifest.xml" to
+                "<application android:label=\"{{APP_NAME_XML}}\" android:icon=\"@drawable/ic_launcher\"/>\n".toByteArray(),
             "$root/android/app/src/main/kotlin/MainActivity.kt" to "x\n".toByteArray(),
             "$root/android/app/src/main/res/drawable-v21/launch_background.xml" to "x\n".toByteArray(),
             "$root/android/app/src/main/res/drawable/ic_launcher.xml" to "x\n".toByteArray(),
@@ -209,7 +212,8 @@ class TemplateRendererTest {
             "$root/dot-github/workflows/build.yml" to "x\n".toByteArray(),
             "$root/dot-gitignore" to "x\n".toByteArray(),
             "$root/lib/main.dart" to "x\n".toByteArray(),
-            "$root/pubspec.yaml" to "x\n".toByteArray(),
+            "$root/pubspec.yaml" to
+                "name: {{PUBSPEC_NAME}}\ndescription: test\n".toByteArray(),
         )
         val spec = ProjectSpec(
             appName = "My Cool App",
@@ -243,7 +247,8 @@ class TemplateRendererTest {
             "$root/android/app/debug.keystore" to "x\n".toByteArray(),
             "$root/android/app/proguard-rules.pro" to "x\n".toByteArray(),
             "$root/android/app/src/main/AndroidManifest.xml" to "x\n".toByteArray(),
-            "$root/android/app/src/main/java/MainActivity.kt" to "x\n".toByteArray(),
+            "$root/android/app/src/main/java/MainActivity.kt" to
+                "package {{PACKAGE_NAME}}\nclass MainActivity { val n = \"{{APP_JS_NAME}}\" }\n".toByteArray(),
             "$root/android/app/src/main/java/MainApplication.kt" to "x\n".toByteArray(),
             "$root/android/app/src/main/res/drawable/ic_launcher.xml" to "x\n".toByteArray(),
             "$root/android/app/src/main/res/drawable/rn_edit_text_material.xml" to "x\n".toByteArray(),
@@ -256,7 +261,8 @@ class TemplateRendererTest {
             "$root/android/gradlew" to "x\n".toByteArray(),
             "$root/android/gradlew.bat" to "x\n".toByteArray(),
             "$root/android/settings.gradle" to "x\n".toByteArray(),
-            "$root/app.json" to "x\n".toByteArray(),
+            "$root/app.json" to
+                "{\"name\": \"{{APP_JS_NAME}}\", \"displayName\": \"{{APP_NAME}}\"}\n".toByteArray(),
             "$root/babel.config.js" to "x\n".toByteArray(),
             "$root/dot-github/workflows/build.yml" to "x\n".toByteArray(),
             "$root/dot-gitignore" to "x\n".toByteArray(),
