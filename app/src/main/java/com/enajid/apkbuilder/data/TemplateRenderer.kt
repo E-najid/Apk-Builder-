@@ -175,7 +175,7 @@ object TemplateRenderer {
             "APP_NAME" to spec.appName,
             "APP_NAME_KOTLIN" to escapeKotlinString(spec.appName),
             "APP_NAME_XML" to escapeXmlText(spec.appName),
-            "APP_NAME_JS" to jsIdentifierFrom(spec.appName),
+            "APP_JS_NAME" to jsIdentifierFrom(spec.appName),
             "PUBSPEC_NAME" to dartIdentifierFrom(spec.appName),
             "PACKAGE_NAME" to spec.packageName,
             "PACKAGE_PATH" to spec.packageName.replace('.', '/'),
@@ -276,6 +276,10 @@ object TemplateRenderer {
                 }
             }
         }.trim('_').take(60)
-        return if (ident.isEmpty() || ident.first().isDigit()) "app_$ident" else ident
+        return when {
+        ident.isEmpty() -> "app"
+        ident.first().isDigit() -> "app_$ident"
+        else -> ident
+    }
     }
 }
