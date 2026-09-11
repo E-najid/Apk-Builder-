@@ -101,9 +101,26 @@ jobs:
           templates/kotlin-app/app/src/main/res/drawable/ic_launcher.xml
           templates/kotlin-app/app/src/main/res/values/strings.xml
           templates/kotlin-app/app/src/main/res/values/themes.xml
+          templates/java-app/dot-github/workflows/build.yml
+          templates/java-app/dot-gitignore
+          templates/java-app/README.md
+          templates/java-app/settings.gradle.kts
+          templates/java-app/build.gradle.kts
+          templates/java-app/gradle.properties
+          templates/java-app/gradlew
+          templates/java-app/gradlew.bat
+          templates/java-app/gradle/wrapper/gradle-wrapper.jar
+          templates/java-app/gradle/wrapper/gradle-wrapper.properties
+          templates/java-app/app/build.gradle.kts
+          templates/java-app/app/proguard-rules.pro
+          templates/java-app/app/src/main/AndroidManifest.xml
+          templates/java-app/app/src/main/java/MainActivity.java
+          templates/java-app/app/src/main/res/drawable/ic_launcher.xml
+          templates/java-app/app/src/main/res/values/strings.xml
+          templates/java-app/app/src/main/res/values/themes.xml
           EOF
           if [ "$MISSING" = "0" ]; then
-            echo "All 17 template assets are present in the APK ✓"
+            echo "All 34 template assets are present in the APK ✓"
           else
             exit 1
           fi

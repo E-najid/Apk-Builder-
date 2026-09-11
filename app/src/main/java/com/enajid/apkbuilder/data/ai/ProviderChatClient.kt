@@ -122,7 +122,7 @@ class ProviderChatClient(
                 "← HTTP 200 in ${elapsed}ms · $summary",
                 details = message?.content?.take(400),
             )
-            decoded
+            requireContent(decoded, request.model)
         }
     }
 
@@ -191,24 +191,27 @@ class ProviderChatClient(
                     "http",
                     "← stream done in ${System.currentTimeMillis() - startedAt}ms · text ${content.length} chars · ${toolAcc.size} tool call(s)",
                 )
-                ChatResponse(
-                    choices = listOf(
-                        Choice(
-                            message = AssistantMessage(
-                                content = content.toString().ifBlank { null },
-                                tool_calls = toolOrder.sorted().map { index ->
-                                    ToolCall(
-                                        id = toolIds[index] ?: "call_$index",
-                                        function = FunctionCall(
-                                            name = toolAcc[index]!!.first,
-                                            arguments = toolAcc[index]!!.second.toString().ifBlank { "{}" },
-                                        ),
-                                    )
-                                }.takeIf { it.isNotEmpty() },
-                            ),
-                            finish_reason = if (toolAcc.isEmpty()) "stop" else "tool_calls",
-                        )
+                requireContent(
+                    ChatResponse(
+                        choices = listOf(
+                            Choice(
+                                message = AssistantMessage(
+                                    content = content.toString().ifBlank { null },
+                                    tool_calls = toolOrder.sorted().map { index ->
+                                        ToolCall(
+                                            id = toolIds[index] ?: "call_$index",
+                                            function = FunctionCall(
+                                                name = toolAcc[index]!!.first,
+                                                arguments = toolAcc[index]!!.second.toString().ifBlank { "{}" },
+                                            ),
+                                        )
+                                    }.takeIf { it.isNotEmpty() },
+                                ),
+                                finish_reason = if (toolAcc.isEmpty()) "stop" else "tool_calls",
+                            )
+                        ),
                     ),
+                    request.model,
                 )
             }
         }
@@ -253,6 +256,24 @@ class ProviderChatClient(
             )
             models
         }
+    }
+
+    /**
+     * A blank answer (no text AND no tool calls) is treated as a provider
+     * failure: most free models that can't do tool calling answer like that.
+     * Throwing here lets the fallback chain switch models automatically.
+     */
+    private fun requireContent(response: ChatResponse, model: String): ChatResponse {
+        val message = response.choices.firstOrNull()?.message
+        val empty = message == null ||
+            (message.content.isNullOrBlank() && message.tool_calls.isNullOrEmpty())
+        if (empty) {
+            AiDebugLog.warn("http", "← HTTP 200 কিন্তু উত্তর খালি — model: $model")
+            throw AiException(
+                "খালি উত্তর দিলো: ${model.take(60)} (tool calling সাপোর্ট করে না)"
+            )
+        }
+        return response
     }
 
     private fun friendlyHttp(code: Int, body: String): String {

@@ -11,6 +11,8 @@ import kotlinx.coroutines.CancellationException
 class FallbackChatApi(
     private val clients: List<ChatApi>,
     private val labels: List<String> = emptyList(),
+    /** Notified on every failed attempt, before the next model is tried. */
+    private val onSwitch: (reason: String) -> Unit = {},
 ) : ChatApi {
 
     private var preferred = 0
@@ -47,6 +49,7 @@ class FallbackChatApi(
                     "${label(index)} ব্যর্থ — পরের model-এ যাওয়া হচ্ছে…",
                     details = e.message,
                 )
+                onSwitch("${label(index)}: ${e.message ?: "ব্যর্থ"}")
             }
         }
         val summary = failures.joinToString("\n")

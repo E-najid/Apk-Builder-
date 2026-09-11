@@ -3,7 +3,7 @@ package com.enajid.apkbuilder.domain
 /** Frameworks users can pick when creating a project. Only Kotlin works in v1. */
 enum class Framework(val label: String, val available: Boolean, val blurb: String) {
     KOTLIN("Kotlin", true, "Modern Android app with Jetpack Compose"),
-    JAVA("Java", false, "Classic Android app in Java"),
+    JAVA("Java", true, "Classic Android app in Java — no Kotlin, pure Java"),
     FLUTTER("Flutter", false, "Cross-platform app with the Flutter SDK"),
     REACT_NATIVE("React Native", false, "Cross-platform app with React"),
 }

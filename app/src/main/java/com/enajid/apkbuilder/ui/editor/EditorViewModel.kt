@@ -145,10 +145,25 @@ class EditorViewModel(
             cachedChain = FallbackChatApi(
                 clients = chain.map { ProviderChatClient(it) },
                 labels = chain.map { it.summary },
+                onSwitch = { reason -> onProviderSwitch(reason) },
             )
             cachedChainSig = sig
         }
         return cachedChain!!
+    }
+
+    /** A model failed mid-task — tell the user we're moving to the next one. */
+    private fun onProviderSwitch(reason: String) {
+        finalizeStreamingBubble()
+        _agent.update { s ->
+            s.copy(
+                messages = s.messages + bubble(
+                    false,
+                    "⚠ $reason — পরের model-এ যাচ্ছি…",
+                    AgentBubble.Kind.TOOL,
+                )
+            )
+        }
     }
 
     init {
@@ -442,6 +457,118 @@ class EditorViewModel(
                 _state.update {
                     it.copy(saving = false, message = "বদলানো যায়নি: ${e.friendlyMessage()}")
                 }
+            }
+        }
+    }
+
+    // ------------------------------------------------- project config --
+
+    data class ProjectConfig(val appName: String, val applicationId: String)
+
+    private fun stringsPath(): String? =
+        _state.value.paths.firstOrNull { it.endsWith("res/values/strings.xml") }
+
+    private fun appGradlePath(): String? =
+        _state.value.paths.firstOrNull { it == "app/build.gradle.kts" || it == "app/build.gradle" }
+
+    /** Reads the current app name + applicationId (drafts included). */
+    suspend fun readProjectConfig(): ProjectConfig? {
+        val strings = stringsPath()?.let { projectAccess.readFile(it) } ?: return null
+        val gradle = appGradlePath()?.let { projectAccess.readFile(it) } ?: return null
+        val appName = Regex("""<string name="app_name">(.*?)</string>""")
+            .find(strings)?.groupValues?.get(1)
+            ?.replace("&amp;", "&")?.replace("&lt;", "<")?.replace("&gt;", ">")
+            .orEmpty()
+        val appId = Regex("""applicationId\s*=\s*"([^"]+)"""")
+            .find(gradle)?.groupValues?.get(1)
+            ?: Regex("""applicationId\s+"([^"]+)"""").find(gradle)?.groupValues?.get(1)
+            ?: ""
+        return ProjectConfig(appName = appName, applicationId = appId)
+    }
+
+    /**
+     * Applies a new app name (strings.xml) and/or applicationId
+     * (app/build.gradle) — as editable drafts, saved to GitHub via Save.
+     */
+    fun applyProjectConfig(newAppName: String, newAppId: String) {
+        viewModelScope.launch {
+            try {
+                val appName = newAppName.trim()
+                val appId = newAppId.trim()
+                if (appName.isBlank() && appId.isBlank()) {
+                    _state.update { it.copy(message = "কিছু লেখো আগে") }
+                    return@launch
+                }
+                if (appId.isNotBlank() &&
+                    !Regex("^[a-zA-Z][a-zA-Z0-9_]*(\\.[a-zA-Z][a-zA-Z0-9_]*)+$").matches(appId)
+                ) {
+                    _state.update { it.copy(message = "Application ID দেখতে এমন হতে হবে: com.example.app") }
+                    return@launch
+                }
+                stringsPath()?.let { path ->
+                    val old = projectAccess.readFile(path) ?: return@let
+                    val updated = old.replace(
+                        Regex("""(<string name="app_name">).*?(</string>)"""),
+                        "$1" + TemplateRenderer.escapeXmlText(appName) + "$2",
+                    )
+                    if (updated != old) projectAccess.writeFile(path, updated)
+                }
+                appGradlePath()?.let { path ->
+                    val old = projectAccess.readFile(path) ?: return@let
+                    val updated = old
+                        .replace(Regex("""(applicationId\s*=\s*")[^"]+(")"""), "$1$appId$2")
+                        .replace(Regex("""(applicationId\s+")[^"]+(")"""), "$1$appId$2")
+                    if (updated != old) projectAccess.writeFile(path, updated)
+                }
+                _state.update {
+                    it.copy(message = "বদল draft হিসেবে বসেছে — Save চেপে GitHub-এ পাঠাও")
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (t: Throwable) {
+                AiDebugLog.error("config", "project config বদলানো ব্যর্থ", t)
+                _state.update { it.copy(message = t.friendlyMessage()) }
+            }
+        }
+    }
+
+    /**
+     * Replaces the launcher icon with the picked image (PNG), committed
+     * straight to GitHub — binaries can't live in the text draft store.
+     * A vector ic_launcher.xml is deleted alongside the new PNG.
+     */
+    fun replaceLauncherIcon(uri: Uri) {
+        if (_state.value.saving) return
+        viewModelScope.launch {
+            try {
+                _state.update { it.copy(saving = true) }
+                val bytes = withContext(Dispatchers.IO) {
+                    getApplication<Application>().contentResolver.openInputStream(uri)
+                        ?.use { it.readBytes() }
+                        ?: error("ছবিটা পড়া গেল না")
+                }
+                if (bytes.size > 5 * 1024 * 1024) error("ছবিটা খুব বড় — 5MB এর কম দাও")
+                val hasVector = "app/src/main/res/drawable/ic_launcher.xml" in _state.value.paths
+                git.pushFiles(
+                    owner = owner,
+                    repo = repo,
+                    branch = branch,
+                    files = listOf(
+                        TemplateRenderer.RenderedFile(TemplateRenderer.ICON_PNG_OUTPUT_PATH, bytes)
+                    ),
+                    deletions = if (hasVector) listOf(TemplateRenderer.ICON_OUTPUT_PATH) else emptyList(),
+                    message = "Replace app icon (from APK Builder)",
+                )
+                runCatching {
+                    val entries = git.listFiles(owner, repo, branch)
+                    serverPaths = entries.map { it.path }
+                    shasByPath = entries.associate { it.path to it.sha }
+                }
+                _state.update { it.copy(saving = false, message = "লোগো বদলে গেছে ✓") }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                _state.update { it.copy(saving = false, message = "লোগো বদলানো যায়নি: ${e.friendlyMessage()}") }
             }
         }
     }

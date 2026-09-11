@@ -1,6 +1,5 @@
 package com.enajid.apkbuilder.data
 
-import com.enajid.apkbuilder.domain.Framework
 import com.enajid.apkbuilder.domain.ProjectSpec
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -23,8 +22,6 @@ class ProjectCreator(
         spec: ProjectSpec,
         onStep: (Step) -> Unit = {},
     ): GithubRepo = withContext(Dispatchers.IO) {
-        check(spec.framework == Framework.KOTLIN) { "Only Kotlin projects are supported in v1" }
-
         onStep(Step.CREATING_REPO)
         val repoName = TemplateRenderer.repoNameFromAppName(spec.appName)
         val repo = projectsRepository.createProjectRepo(

@@ -29,6 +29,7 @@ import androidx.compose.material.icons.rounded.Redo
 import androidx.compose.material.icons.rounded.Save
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.SmartToy
+import androidx.compose.material.icons.rounded.Tune
 import androidx.compose.material.icons.rounded.Undo
 import androidx.compose.material.icons.rounded.UploadFile
 import androidx.compose.material3.AlertDialog
@@ -92,6 +93,7 @@ fun EditorScreen(
 
     val undoStack = remember { UndoStack() }
     var findOpen by remember { mutableStateOf(false) }
+    var showProjectSettings by remember { mutableStateOf(false) }
     var replaceBinaryPath by remember { mutableStateOf<String?>(null) }
     var replaceBinaryUri by remember { mutableStateOf<Uri?>(null) }
 
@@ -147,6 +149,9 @@ fun EditorScreen(
                     }
                 },
                 actions = {
+                    IconButton(onClick = { showProjectSettings = true }) {
+                        Icon(Icons.Rounded.Tune, contentDescription = "Project settings")
+                    }
                     IconButton(onClick = { viewModel.openAgent() }) {
                         Icon(Icons.Rounded.SmartToy, contentDescription = "AI agent")
                     }
@@ -267,6 +272,13 @@ fun EditorScreen(
                 ScreenLoading("Saving your changes…")
             }
         }
+    }
+
+    if (showProjectSettings) {
+        ProjectSettingsDialog(
+            viewModel = viewModel,
+            onDismiss = { showProjectSettings = false },
+        )
     }
 
     AgentSheet(
@@ -617,6 +629,87 @@ private fun FindBar(
                 ) { Text("সব") }
             }
         }
+    }
+}
+
+/** App name / applicationId / launcher icon — the "project settings". */
+@Composable
+private fun ProjectSettingsDialog(
+    viewModel: EditorViewModel,
+    onDismiss: () -> Unit,
+) {
+    var appName by remember { mutableStateOf("") }
+    var appId by remember { mutableStateOf("") }
+    var loaded by remember { mutableStateOf(false) }
+    var pendingIconUri by remember { mutableStateOf<Uri?>(null) }
+
+    LaunchedEffect(Unit) {
+        viewModel.readProjectConfig()?.let { config ->
+            appName = config.appName
+            appId = config.applicationId
+        }
+        loaded = true
+    }
+
+    val iconPicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.GetContent()
+    ) { uri -> if (uri != null) pendingIconUri = uri }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Project settings") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedTextField(
+                    value = appName,
+                    onValueChange = { appName = it },
+                    label = { Text("App name") },
+                    singleLine = true,
+                )
+                OutlinedTextField(
+                    value = appId,
+                    onValueChange = { appId = it },
+                    label = { Text("Application ID (package)") },
+                    placeholder = { Text("com.example.app") },
+                    singleLine = true,
+                )
+                Text(
+                    "নাম ও ID বদল draft হিসেবে এডিটরে বসবে — Save চাপলে GitHub-এ যাবে।",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                OutlinedButton(onClick = { iconPicker.launch("image/*") }, modifier = Modifier.fillMaxWidth()) {
+                    Text("🖼 লোগো বদলাও (ছবি বাছাই)")
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = {
+                    viewModel.applyProjectConfig(appName, appId)
+                    onDismiss()
+                },
+                enabled = loaded && (appName.isNotBlank() || appId.isNotBlank()),
+            ) { Text("বদলাও") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("না") } },
+    )
+
+    pendingIconUri?.let { uri ->
+        AlertDialog(
+            onDismissRequest = { pendingIconUri = null },
+            title = { Text("লোগো বদলে দেবে?") },
+            text = { Text("নতুন ছবিটা সরাসরি GitHub-এ commit হবে (এখনই) এবং পরের Build থেকে নতুন লোগোই থাকবে।") },
+            confirmButton = {
+                TextButton(onClick = {
+                    viewModel.replaceLauncherIcon(uri)
+                    pendingIconUri = null
+                }) { Text("বদলে দাও") }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingIconUri = null }) { Text("না") }
+            },
+        )
     }
 }
 

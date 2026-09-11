@@ -44,7 +44,20 @@ object TemplateRenderer {
         val executable: Boolean = false,
     )
 
-    private val entries = listOf(
+    /** Asset root for a framework (see [render]). */
+    fun templateRoot(framework: Framework): String = when (framework) {
+        Framework.KOTLIN -> "templates/kotlin-app"
+        Framework.JAVA -> "templates/java-app"
+        else -> throw IllegalArgumentException("No template available yet for $framework")
+    }
+
+    private fun entriesFor(framework: Framework): List<Entry> = when (framework) {
+        Framework.KOTLIN -> kotlinEntries
+        Framework.JAVA -> javaEntries
+        else -> throw IllegalArgumentException("No template available yet for $framework")
+    }
+
+    private val kotlinEntries = listOf(
         Entry("dot-github/workflows/build.yml", ".github/workflows/build.yml"),
         Entry("dot-gitignore", ".gitignore"),
         Entry("README.md", "README.md"),
@@ -64,8 +77,29 @@ object TemplateRenderer {
         Entry("app/src/main/res/values/themes.xml", "app/src/main/res/values/themes.xml"),
     )
 
+    private val javaEntries = listOf(
+        Entry("dot-github/workflows/build.yml", ".github/workflows/build.yml"),
+        Entry("dot-gitignore", ".gitignore"),
+        Entry("README.md", "README.md"),
+        Entry("settings.gradle.kts", "settings.gradle.kts"),
+        Entry("build.gradle.kts", "build.gradle.kts"),
+        Entry("gradle.properties", "gradle.properties"),
+        Entry("gradlew", "gradlew", executable = true),
+        Entry("gradlew.bat", "gradlew.bat"),
+        Entry("gradle/wrapper/gradle-wrapper.jar", "gradle/wrapper/gradle-wrapper.jar", binary = true),
+        Entry("gradle/wrapper/gradle-wrapper.properties", "gradle/wrapper/gradle-wrapper.properties"),
+        Entry("app/build.gradle.kts", "app/build.gradle.kts"),
+        Entry("app/proguard-rules.pro", "app/proguard-rules.pro"),
+        Entry("app/src/main/AndroidManifest.xml", "app/src/main/AndroidManifest.xml"),
+        Entry("app/src/main/java/MainActivity.java", "app/src/main/java/{{PACKAGE_PATH}}/MainActivity.java"),
+        Entry("app/src/main/res/drawable/ic_launcher.xml", "app/src/main/res/drawable/ic_launcher.xml"),
+        Entry("app/src/main/res/values/strings.xml", "app/src/main/res/values/strings.xml"),
+        Entry("app/src/main/res/values/themes.xml", "app/src/main/res/values/themes.xml"),
+    )
+
     fun render(spec: ProjectSpec, readAsset: (String) -> ByteArray): RenderResult {
-        require(spec.framework == Framework.KOTLIN) { "Only the Kotlin template exists in v1" }
+        val root = templateRoot(spec.framework)
+        val entries = entriesFor(spec.framework)
         val values = mapOf(
             "APP_NAME" to spec.appName,
             "APP_NAME_KOTLIN" to escapeKotlinString(spec.appName),
@@ -80,7 +114,7 @@ object TemplateRenderer {
         for (entry in entries) {
             // A custom icon replaces the default vector drawable.
             if (entry.output == ICON_OUTPUT_PATH && spec.iconPng != null) continue
-            val bytes = readAsset("$TEMPLATE_ROOT/${entry.asset}")
+            val bytes = readAsset("$root/${entry.asset}")
             val content = if (entry.binary) {
                 bytes
             } else {

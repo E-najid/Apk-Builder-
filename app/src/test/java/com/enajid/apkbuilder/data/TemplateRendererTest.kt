@@ -86,6 +86,45 @@ class TemplateRendererTest {
     }
 
     @Test
+    fun `java template renders with package path and no kotlin files`() {
+        val root = "templates/java-app"
+        val assets = mapOf(
+            "$root/dot-github/workflows/build.yml" to "name: Build\n".toByteArray(),
+            "$root/dot-gitignore" to "/build\n".toByteArray(),
+            "$root/README.md" to "# {{APP_NAME}}\n".toByteArray(),
+            "$root/settings.gradle.kts" to "rootProject.name = \"{{APP_NAME_KOTLIN}}\"\n".toByteArray(),
+            "$root/build.gradle.kts" to "plugins { }\n".toByteArray(),
+            "$root/gradle.properties" to "android.useAndroidX=true\n".toByteArray(),
+            "$root/gradlew" to "#!/bin/sh\n".toByteArray(),
+            "$root/gradlew.bat" to "@echo off\n".toByteArray(),
+            "$root/gradle/wrapper/gradle-wrapper.jar" to byteArrayOf(1, 2, 3),
+            "$root/gradle/wrapper/gradle-wrapper.properties" to "distributionUrl=x\n".toByteArray(),
+            "$root/app/build.gradle.kts" to "applicationId = \"{{PACKAGE_NAME}}\"\n".toByteArray(),
+            "$root/app/proguard-rules.pro" to "\n".toByteArray(),
+            "$root/app/src/main/AndroidManifest.xml" to "<manifest/>\n".toByteArray(),
+            "$root/app/src/main/java/MainActivity.java" to "package {{PACKAGE_NAME}};\n".toByteArray(),
+            "$root/app/src/main/res/drawable/ic_launcher.xml" to "<vector/>\n".toByteArray(),
+            "$root/app/src/main/res/values/strings.xml" to "<string name=\"app_name\">{{APP_NAME_XML}}</string>\n".toByteArray(),
+            "$root/app/src/main/res/values/themes.xml" to "<resources/>\n".toByteArray(),
+        )
+        val spec = ProjectSpec(
+            appName = "Test Java",
+            packageName = "com.enajid.testjava",
+            minSdk = 24,
+            targetSdk = 35,
+            framework = Framework.JAVA,
+        )
+        val result = TemplateRenderer.render(spec) { assets.getValue(it) }
+
+        val activity = result.files.first { it.path == "app/src/main/java/com/enajid/testjava/MainActivity.java" }
+        assertEquals("package com.enajid.testjava;", activity.asText().trim())
+        // no Kotlin/Compose files sneak in from the Kotlin template
+        assertTrue(result.files.none { it.path.endsWith(".kt") })
+        // gradlew keeps its executable bit
+        assertTrue(result.files.first { it.path == "gradlew" }.executable)
+    }
+
+    @Test
     fun `escapes app names for kotlin string literals`() {
         assertEquals("My \\\"Cool\\\" App", TemplateRenderer.escapeKotlinString("My \"Cool\" App"))
         assertEquals("a\\\$b", TemplateRenderer.escapeKotlinString("a\$b"))
