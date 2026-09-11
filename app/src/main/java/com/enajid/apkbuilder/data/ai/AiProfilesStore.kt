@@ -27,20 +27,36 @@ data class Skill(
  * Stores the user's AI model profiles and skills as JSON in app-private
  * DataStore — no database, nothing ever leaves the device except calls to
  * the providers the user configured themselves.
+ *
+ * API keys are sealed at rest with [SecretCipher] (Android Keystore) via
+ * [ProfileCrypto]: they exist in plaintext only in memory. Profiles saved
+ * by older versions are re-encrypted transparently on the next read.
  */
 class AiProfilesStore(private val context: Context) {
 
     private val json = Json { ignoreUnknownKeys = true }
 
     val profilesFlow: Flow<List<ModelProfile>> = context.aiDataStore.data.map { prefs ->
-        decode(prefs[KEY_PROFILES], ModelProfile.serializer()) { seedProfiles() }
+        ProfileCrypto.forMemory(
+            decode(prefs[KEY_PROFILES], ModelProfile.serializer()) { seedProfiles() },
+            SecretCipher::decrypt,
+        )
     }
 
     val skillsFlow: Flow<List<Skill>> = context.aiDataStore.data.map { prefs ->
         decode(prefs[KEY_SKILLS], Skill.serializer()) { builtInSkills() }.ifEmpty { builtInSkills() }
     }
 
-    suspend fun profiles(): List<ModelProfile> = profilesFlow.first()
+    suspend fun profiles(): List<ModelProfile> {
+        val stored = context.aiDataStore.data.first()[KEY_PROFILES]
+        val list = decode(stored, ModelProfile.serializer()) { seedProfiles() }
+        if (ProfileCrypto.hasPlaintextKeys(list, SecretCipher::isEncrypted)) {
+            // Written by an older version: the keys still read fine, this
+            // just seals them at rest.
+            saveProfiles(list)
+        }
+        return ProfileCrypto.forMemory(list, SecretCipher::decrypt)
+    }
 
     suspend fun skills(): List<Skill> = skillsFlow.first()
 
@@ -115,8 +131,9 @@ class AiProfilesStore(private val context: Context) {
     }
 
     private suspend fun saveProfiles(list: List<ModelProfile>) {
+        val sealed = ProfileCrypto.forStorage(list, SecretCipher::encrypt)
         context.aiDataStore.edit { prefs ->
-            prefs[KEY_PROFILES] = json.encodeToString(ListSerializer(ModelProfile.serializer()), list)
+            prefs[KEY_PROFILES] = json.encodeToString(ListSerializer(ModelProfile.serializer()), sealed)
         }
     }
 
