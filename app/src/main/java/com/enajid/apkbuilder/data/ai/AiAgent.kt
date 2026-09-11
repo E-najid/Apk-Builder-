@@ -119,6 +119,7 @@ class AiAgent(
                 name = "list_files",
                 description = "List every file in the current project, one path per line. " +
                     "Use after creating or deleting files to see the fresh list.",
+                parameters = buildJsonObject { put("type", "object") },
             ),
         ),
         ToolSpec(
@@ -184,6 +185,7 @@ class AiAgent(
                 name = "get_build_status",
                 description = "Get the latest GitHub Actions build for this project: " +
                     "run number, status, conclusion and failing steps, if any.",
+                parameters = buildJsonObject { put("type", "object") },
             ),
         ),
         ToolSpec(
@@ -360,10 +362,13 @@ class AiAgent(
                 }
                 val matches = StringBuilder()
                 var count = 0
-                search@ for (path in project.listPaths()) {
+                for (path in project.listPaths()) {
+                    if (count >= maxResults || matches.length > MAX_SEARCH_OUTPUT) break
                     val content = project.readFile(path) ?: continue
-                    content.lineSequence().forEachIndexed { index, line ->
-                        if (count >= maxResults || matches.length > MAX_SEARCH_OUTPUT) return@search
+                    val lines = content.lines()
+                    for (index in lines.indices) {
+                        if (count >= maxResults || matches.length > MAX_SEARCH_OUTPUT) break
+                        val line = lines[index]
                         if (regex.containsMatchIn(line)) {
                             matches.appendLine("$path:${index + 1}: ${line.trim().take(160)}")
                             count++

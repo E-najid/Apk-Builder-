@@ -74,6 +74,17 @@ class RecordingAccess(private val inner: AgentProjectAccess) : AgentProjectAcces
         inner.writeFile(path, content)
         writtenPaths += path
     }
+
+    override suspend fun deleteFile(path: String): String? = inner.deleteFile(path)
+
+    override suspend fun readAppConfig(): AppConfigSnapshot? = inner.readAppConfig()
+
+    override suspend fun applyAppConfig(appName: String?, applicationId: String?): String? =
+        inner.applyAppConfig(appName, applicationId)
+
+    override suspend fun buildStatus(): String? = inner.buildStatus()
+
+    override suspend fun gitLog(limit: Int): List<String> = inner.gitLog(limit)
 }
 
 /**

@@ -169,6 +169,24 @@ data class WorkflowRunsResponse(
 )
 
 @Serializable
+data class CommitListItem(
+    val sha: String = "",
+    val commit: CommitBrief = CommitBrief(),
+)
+
+@Serializable
+data class CommitBrief(
+    val message: String = "",
+    val author: CommitAuthorBrief? = null,
+)
+
+@Serializable
+data class CommitAuthorBrief(
+    val name: String = "",
+    val date: String = "",
+)
+
+@Serializable
 data class StepInfo(
     val name: String = "",
     val status: String = "",

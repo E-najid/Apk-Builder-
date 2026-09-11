@@ -149,6 +149,14 @@ interface GitHubApi {
         @Path("repo") repo: String,
     ): ResponseBody
 
+    @GET("repos/{owner}/{repo}/commits")
+    suspend fun listCommits(
+        @Path("owner") owner: String,
+        @Path("repo") repo: String,
+        @Query("sha") sha: String? = null,
+        @Query("per_page") perPage: Int = 10,
+    ): List<CommitListItem>
+
     // ---- Actions API ----
 
     @GET("repos/{owner}/{repo}/actions/runs")
