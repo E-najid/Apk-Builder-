@@ -588,7 +588,7 @@ class EditorViewModel(
                     owner = owner,
                     repo = repo,
                     branch = branch,
-                    files = listOf(TemplateRenderer.RenderedFile(iconPng, bytes))
+                    files = listOf(TemplateRenderer.RenderedFile(iconPng, bytes)),
                     deletions = if (hasVector) listOf(iconXml) else emptyList(),
                     message = "Replace app icon (from APK Builder)",
                 )
