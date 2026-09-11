@@ -17,3 +17,6 @@
 
 # Kotlin
 .kotlin/
+
+# Bundled RN template ships the stock debug keystore (it is NOT a secret).
+!app/src/main/assets/templates/react-native-app/android/app/debug.keystore
