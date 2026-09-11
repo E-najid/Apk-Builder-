@@ -114,7 +114,7 @@ class AiAgentTest {
                 )
             )
         )
-        val final = ChatResponse(
+        val finalResponse = ChatResponse(
             choices = listOf(Choice(message = AssistantMessage(content = "All done")))
         )
         var call = 0
@@ -130,7 +130,7 @@ class AiAgentTest {
                 return if (call == 1) write else {
                     onDelta("All ")
                     onDelta("done")
-                    final
+                    finalResponse
                 }
             }
         }
