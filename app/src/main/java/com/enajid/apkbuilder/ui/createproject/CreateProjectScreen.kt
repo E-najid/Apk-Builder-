@@ -296,8 +296,19 @@ fun CreateProjectScreen(
                     )
                 }
                 Text(
-                    "Minimum = oldest Android that can run your app. Target = newest " +
-                        "Android it's tuned for. Defaults are fine for most apps.",
+                    when {
+                        state.source != ProjectSource.UPLOAD &&
+                            state.framework == Framework.REACT_NATIVE ->
+                            "React Native projects pin minSdk 24 / target 36 — these " +
+                                "pickers only apply to Kotlin and Java apps."
+                        state.source != ProjectSource.UPLOAD &&
+                            state.framework == Framework.FLUTTER ->
+                            "Flutter picks the SDK versions from its toolchain — these " +
+                                "pickers only apply to Kotlin and Java apps."
+                        else ->
+                            "Minimum = oldest Android that can run your app. Target = newest " +
+                                "Android it's tuned for. Defaults are fine for most apps."
+                    },
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
