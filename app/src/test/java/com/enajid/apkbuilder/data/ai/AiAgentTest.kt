@@ -109,7 +109,9 @@ class AiAgentTest {
             choices = listOf(
                 Choice(
                     message = AssistantMessage(
-                        tool_calls = listOf(toolCall("c1", "read_file", """{"path":"app/build.gradle.kts"}""")
+                        tool_calls = listOf(
+                            toolCall("c1", "read_file", """{"path":"app/build.gradle.kts"}""")
+                        )
                     )
                 )
             )
