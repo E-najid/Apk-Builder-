@@ -39,7 +39,8 @@ class UndoStackTest {
         clock = 5_000
         stack.push(value("one-two"))
 
-        assertEquals("one", stack.undo(value("one-two-three"))?.text)
+        assertEquals("one-two", stack.undo(value("one-two-three"))?.text)
+        assertEquals("one", stack.undo(value("one-two"))?.text)
         assertNull(stack.undo(value("one")))
     }
 
