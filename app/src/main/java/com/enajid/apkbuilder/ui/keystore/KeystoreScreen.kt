@@ -384,7 +384,7 @@ private fun ImportKeystoreDialog(
                 OutlinedTextField(
                     value = alias, onValueChange = { alias = it },
                     label = { Text("Key alias (optional)") },
-                    singleLine = true, fontFamily = FontFamily.Monospace,
+                    singleLine = true,
                 )
                 if (busy) CircularProgressIndicator(Modifier.size(20.dp))
             }
