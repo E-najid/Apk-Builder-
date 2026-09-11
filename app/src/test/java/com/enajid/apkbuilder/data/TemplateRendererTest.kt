@@ -125,6 +125,165 @@ class TemplateRendererTest {
     }
 
     @Test
+    fun `react native template renders package path, js name and android tree`() {
+        val root = "templates/react-native-app"
+        val assets = mapOf(
+            "$root/App.tsx" to "x\n".toByteArray(),
+            "$root/README.md" to "x\n".toByteArray(),
+            "$root/android/app/build.gradle" to "x\n".toByteArray(),
+            "$root/android/app/debug.keystore" to "x\n".toByteArray(),
+            "$root/android/app/proguard-rules.pro" to "x\n".toByteArray(),
+            "$root/android/app/src/main/AndroidManifest.xml" to "x\n".toByteArray(),
+            "$root/android/app/src/main/java/MainActivity.kt" to "x\n".toByteArray(),
+            "$root/android/app/src/main/java/MainApplication.kt" to "x\n".toByteArray(),
+            "$root/android/app/src/main/res/drawable/ic_launcher.xml" to "x\n".toByteArray(),
+            "$root/android/app/src/main/res/drawable/rn_edit_text_material.xml" to "x\n".toByteArray(),
+            "$root/android/app/src/main/res/values/strings.xml" to "x\n".toByteArray(),
+            "$root/android/app/src/main/res/values/styles.xml" to "x\n".toByteArray(),
+            "$root/android/build.gradle" to "x\n".toByteArray(),
+            "$root/android/gradle.properties" to "x\n".toByteArray(),
+            "$root/android/gradle/wrapper/gradle-wrapper.jar" to "x\n".toByteArray(),
+            "$root/android/gradle/wrapper/gradle-wrapper.properties" to "x\n".toByteArray(),
+            "$root/android/gradlew" to "x\n".toByteArray(),
+            "$root/android/gradlew.bat" to "x\n".toByteArray(),
+            "$root/android/settings.gradle" to "x\n".toByteArray(),
+            "$root/app.json" to "x\n".toByteArray(),
+            "$root/babel.config.js" to "x\n".toByteArray(),
+            "$root/dot-github/workflows/build.yml" to "x\n".toByteArray(),
+            "$root/dot-gitignore" to "x\n".toByteArray(),
+            "$root/dot-watchmanconfig" to "x\n".toByteArray(),
+            "$root/index.js" to "x\n".toByteArray(),
+            "$root/metro.config.js" to "x\n".toByteArray(),
+            "$root/package.json" to "x\n".toByteArray(),
+        )
+        val spec = ProjectSpec(
+            appName = "My Cool 2 App",
+            packageName = "com.enajid.testrn",
+            minSdk = 24,
+            targetSdk = 36,
+            framework = Framework.REACT_NATIVE,
+        )
+        val result = TemplateRenderer.render(spec) { assets.getValue(it) }
+
+        // Kotlin sources land in the package directory.
+        val activity = result.files.first { it.path == "android/app/src/main/java/com/enajid/testrn/MainActivity.kt" }
+        assertTrue(activity.asText().contains("package com.enajid.testrn"))
+        assertTrue(activity.asText().contains("MyCool2App"))
+        // app.json + package.json carry the safe JS identifier.
+        val appJson = result.files.first { it.path == "app.json" }.asText()
+        assertTrue(appJson.contains("\"name\": \"MyCool2App\""))
+        assertTrue(appJson.contains("\"displayName\": \"My Cool 2 App\""))
+        // Watchman config is a dotfile; gitignore comes from the dot- asset.
+        assertTrue(result.files.any { it.path == ".watchmanconfig" })
+        assertTrue(result.files.any { it.path == ".gitignore" })
+        // Binary entries pass through untouched.
+        assertTrue(result.files.any { it.path == "android/app/debug.keystore" })
+        assertTrue(result.files.first { it.path == "android/gradlew" }.executable)
+        // No Flutter or Kotlin leftovers.
+        assertTrue(result.files.none { it.path == "pubspec.yaml" })
+        assertTrue(result.files.none { it.path == "app/src/main/java/MainActivity.kt" })
+        assertEquals(assets.size, result.files.size)
+    }
+
+    @Test
+    fun `flutter template renders pubspec name and manifest label`() {
+        val root = "templates/flutter-app"
+        val assets = mapOf(
+            "$root/README.md" to "x\n".toByteArray(),
+            "$root/analysis_options.yaml" to "x\n".toByteArray(),
+            "$root/android/app/build.gradle.kts" to "x\n".toByteArray(),
+            "$root/android/app/src/debug/AndroidManifest.xml" to "x\n".toByteArray(),
+            "$root/android/app/src/main/AndroidManifest.xml" to "x\n".toByteArray(),
+            "$root/android/app/src/main/kotlin/MainActivity.kt" to "x\n".toByteArray(),
+            "$root/android/app/src/main/res/drawable-v21/launch_background.xml" to "x\n".toByteArray(),
+            "$root/android/app/src/main/res/drawable/ic_launcher.xml" to "x\n".toByteArray(),
+            "$root/android/app/src/main/res/drawable/launch_background.xml" to "x\n".toByteArray(),
+            "$root/android/app/src/main/res/values-night/styles.xml" to "x\n".toByteArray(),
+            "$root/android/app/src/main/res/values/styles.xml" to "x\n".toByteArray(),
+            "$root/android/app/src/profile/AndroidManifest.xml" to "x\n".toByteArray(),
+            "$root/android/build.gradle.kts" to "x\n".toByteArray(),
+            "$root/android/dot-gitignore" to "x\n".toByteArray(),
+            "$root/android/gradle.properties" to "x\n".toByteArray(),
+            "$root/android/gradle/wrapper/gradle-wrapper.properties" to "x\n".toByteArray(),
+            "$root/android/settings.gradle.kts" to "x\n".toByteArray(),
+            "$root/dot-github/workflows/build.yml" to "x\n".toByteArray(),
+            "$root/dot-gitignore" to "x\n".toByteArray(),
+            "$root/lib/main.dart" to "x\n".toByteArray(),
+            "$root/pubspec.yaml" to "x\n".toByteArray(),
+        )
+        val spec = ProjectSpec(
+            appName = "My Cool App",
+            packageName = "com.enajid.testflutter",
+            minSdk = 24,
+            targetSdk = 36,
+            framework = Framework.FLUTTER,
+        )
+        val result = TemplateRenderer.render(spec) { assets.getValue(it) }
+
+        val pubspec = result.files.first { it.path == "pubspec.yaml" }.asText()
+        assertTrue(pubspec.contains("name: my_cool_app"))
+        val manifest = result.files.first { it.path == "android/app/src/main/AndroidManifest.xml" }.asText()
+        assertTrue(manifest.contains("android:label=\"My Cool App\""))
+        assertTrue(manifest.contains("android:icon=\"@drawable/ic_launcher\""))
+        // MainActivity lands in the package dir; the android .gitignore is
+        // rendered from the dot- asset (aapt drops real dot-files).
+        assertTrue(result.files.any { it.path == "android/app/src/main/kotlin/com/enajid/testflutter/MainActivity.kt" })
+        assertTrue(result.files.any { it.path == "android/.gitignore" })
+        assertTrue(result.files.any { it.path == "android/app/src/main/res/values-night/styles.xml" })
+        assertEquals(assets.size, result.files.size)
+    }
+
+    @Test
+    fun `custom icon swaps the vector for a png in the framework's res dir`() {
+        val root = "templates/react-native-app"
+        val assets = mapOf(
+            "$root/App.tsx" to "x\n".toByteArray(),
+            "$root/README.md" to "x\n".toByteArray(),
+            "$root/android/app/build.gradle" to "x\n".toByteArray(),
+            "$root/android/app/debug.keystore" to "x\n".toByteArray(),
+            "$root/android/app/proguard-rules.pro" to "x\n".toByteArray(),
+            "$root/android/app/src/main/AndroidManifest.xml" to "x\n".toByteArray(),
+            "$root/android/app/src/main/java/MainActivity.kt" to "x\n".toByteArray(),
+            "$root/android/app/src/main/java/MainApplication.kt" to "x\n".toByteArray(),
+            "$root/android/app/src/main/res/drawable/ic_launcher.xml" to "x\n".toByteArray(),
+            "$root/android/app/src/main/res/drawable/rn_edit_text_material.xml" to "x\n".toByteArray(),
+            "$root/android/app/src/main/res/values/strings.xml" to "x\n".toByteArray(),
+            "$root/android/app/src/main/res/values/styles.xml" to "x\n".toByteArray(),
+            "$root/android/build.gradle" to "x\n".toByteArray(),
+            "$root/android/gradle.properties" to "x\n".toByteArray(),
+            "$root/android/gradle/wrapper/gradle-wrapper.jar" to "x\n".toByteArray(),
+            "$root/android/gradle/wrapper/gradle-wrapper.properties" to "x\n".toByteArray(),
+            "$root/android/gradlew" to "x\n".toByteArray(),
+            "$root/android/gradlew.bat" to "x\n".toByteArray(),
+            "$root/android/settings.gradle" to "x\n".toByteArray(),
+            "$root/app.json" to "x\n".toByteArray(),
+            "$root/babel.config.js" to "x\n".toByteArray(),
+            "$root/dot-github/workflows/build.yml" to "x\n".toByteArray(),
+            "$root/dot-gitignore" to "x\n".toByteArray(),
+            "$root/dot-watchmanconfig" to "x\n".toByteArray(),
+            "$root/index.js" to "x\n".toByteArray(),
+            "$root/metro.config.js" to "x\n".toByteArray(),
+            "$root/package.json" to "x\n".toByteArray(),
+        )
+        val spec = ProjectSpec(
+            appName = "Icon App",
+            packageName = "com.enajid.iconapp",
+            minSdk = 24,
+            targetSdk = 36,
+            framework = Framework.REACT_NATIVE,
+            iconPng = byteArrayOf(7, 7, 7),
+        )
+        val result = TemplateRenderer.render(spec) { assets.getValue(it) }
+
+        assertEquals(
+            listOf("android/app/src/main/res/drawable/ic_launcher.xml"),
+            result.deletions,
+        )
+        assertTrue(result.files.any { it.path == "android/app/src/main/res/drawable/ic_launcher.png" })
+        assertTrue(result.files.none { it.path == "android/app/src/main/res/drawable/ic_launcher.xml" })
+    }
+
+    @Test
     fun `escapes app names for kotlin string literals`() {
         assertEquals("My \\\"Cool\\\" App", TemplateRenderer.escapeKotlinString("My \"Cool\" App"))
         assertEquals("a\\\$b", TemplateRenderer.escapeKotlinString("a\$b"))
@@ -135,6 +294,16 @@ class TemplateRendererTest {
     fun `escapes app names for xml resources`() {
         assertEquals("a &amp; b", TemplateRenderer.escapeXmlText("a & b"))
         assertEquals("it\\'s &lt;great&gt;", TemplateRenderer.escapeXmlText("it's <great>"))
+    }
+
+    @Test
+    fun `app names become safe js and dart identifiers`() {
+        assertEquals("MyCool2App", TemplateRenderer.jsIdentifierFrom("My Cool 2 App!"))
+        assertEquals("App2Fast", TemplateRenderer.jsIdentifierFrom("2 Fast"))
+        assertEquals("App", TemplateRenderer.jsIdentifierFrom("!!!"))
+        assertEquals("my_cool_app", TemplateRenderer.dartIdentifierFrom("My Cool App"))
+        assertEquals("app_2_fast", TemplateRenderer.dartIdentifierFrom("2 Fast"))
+        assertEquals("app", TemplateRenderer.dartIdentifierFrom("!!!"))
     }
 
     @Test

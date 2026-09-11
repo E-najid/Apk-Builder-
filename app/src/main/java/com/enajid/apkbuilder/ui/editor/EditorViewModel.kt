@@ -23,6 +23,7 @@ import com.enajid.apkbuilder.data.ai.MultiModelAgent
 import com.enajid.apkbuilder.data.ai.ProviderChatClient
 import com.enajid.apkbuilder.data.ai.Skill
 import com.enajid.apkbuilder.data.friendlyMessage
+import com.enajid.apkbuilder.domain.Framework
 import com.enajid.apkbuilder.domain.ProjectFiles
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -468,17 +469,38 @@ class EditorViewModel(
     private fun stringsPath(): String? =
         _state.value.paths.firstOrNull { it.endsWith("res/values/strings.xml") }
 
+    private fun manifestPath(): String? =
+        _state.value.paths.firstOrNull {
+            it.endsWith("app/src/main/AndroidManifest.xml") && !it.contains("debug/") && !it.contains("profile/")
+        }
+
+    /** Kotlin/Java keep it at the root, RN/Flutter nest it under android/. */
     private fun appGradlePath(): String? =
-        _state.value.paths.firstOrNull { it == "app/build.gradle.kts" || it == "app/build.gradle" }
+        _state.value.paths.firstOrNull {
+            it == "app/build.gradle.kts" || it == "app/build.gradle" ||
+                it == "android/app/build.gradle.kts" || it == "android/app/build.gradle"
+        }
+
+    /** Figures out which template the open project came from. */
+    private fun detectFramework(): Framework = when {
+        _state.value.paths.any { it == "pubspec.yaml" } -> Framework.FLUTTER
+        _state.value.paths.any { it == "package.json" } -> Framework.REACT_NATIVE
+        else -> Framework.KOTLIN
+    }
 
     /** Reads the current app name + applicationId (drafts included). */
     suspend fun readProjectConfig(): ProjectConfig? {
-        val strings = stringsPath()?.let { projectAccess.readFile(it) } ?: return null
         val gradle = appGradlePath()?.let { projectAccess.readFile(it) } ?: return null
-        val appName = Regex("""<string name="app_name">(.*?)</string>""")
-            .find(strings)?.groupValues?.get(1)
-            ?.replace("&amp;", "&")?.replace("&lt;", "<")?.replace("&gt;", ">")
-            .orEmpty()
+        val appName = stringsPath()?.let { path ->
+            Regex("""<string name="app_name">(.*?)</string>""")
+                .find(projectAccess.readFile(path) ?: "")?.groupValues?.get(1)
+                ?.replace("&amp;", "&")?.replace("&lt;", "<")?.replace("&gt;", ">")
+        } ?: manifestPath()?.let { path ->
+            // Flutter keeps the display name in the manifest label.
+            Regex("""android:label="([^"]+)"""")
+                .find(projectAccess.readFile(path) ?: "")?.groupValues?.get(1)
+                ?.replace("&amp;", "&")?.replace("&lt;", "<")?.replace("&gt;", ">")
+        } ?: ""
         val appId = Regex("""applicationId\s*=\s*"([^"]+)"""")
             .find(gradle)?.groupValues?.get(1)
             ?: Regex("""applicationId\s+"([^"]+)"""").find(gradle)?.groupValues?.get(1)
@@ -512,6 +534,16 @@ class EditorViewModel(
                         "$1" + TemplateRenderer.escapeXmlText(appName) + "$2",
                     )
                     if (updated != old) projectAccess.writeFile(path, updated)
+                } ?: run {
+                    // No strings.xml (Flutter): the manifest label is the app name.
+                    manifestPath()?.let { path ->
+                        val old = projectAccess.readFile(path) ?: return@let
+                        val updated = old.replace(
+                            Regex("""(android:label=")[^"]+(")"""),
+                            "$1" + TemplateRenderer.escapeXmlText(appName) + "$2",
+                        )
+                        if (updated != old) projectAccess.writeFile(path, updated)
+                    }
                 }
                 appGradlePath()?.let { path ->
                     val old = projectAccess.readFile(path) ?: return@let
@@ -548,15 +580,16 @@ class EditorViewModel(
                         ?: error("ছবিটা পড়া গেল না")
                 }
                 if (bytes.size > 5 * 1024 * 1024) error("ছবিটা খুব বড় — 5MB এর কম দাও")
-                val hasVector = "app/src/main/res/drawable/ic_launcher.xml" in _state.value.paths
+                val framework = detectFramework()
+                val iconXml = TemplateRenderer.iconXmlPath(framework)
+                val iconPng = TemplateRenderer.iconPngPath(framework)
+                val hasVector = iconXml in _state.value.paths
                 git.pushFiles(
                     owner = owner,
                     repo = repo,
                     branch = branch,
-                    files = listOf(
-                        TemplateRenderer.RenderedFile(TemplateRenderer.ICON_PNG_OUTPUT_PATH, bytes)
-                    ),
-                    deletions = if (hasVector) listOf(TemplateRenderer.ICON_OUTPUT_PATH) else emptyList(),
+                    files = listOf(TemplateRenderer.RenderedFile(iconPng, bytes))
+                    deletions = if (hasVector) listOf(iconXml) else emptyList(),
                     message = "Replace app icon (from APK Builder)",
                 )
                 runCatching {

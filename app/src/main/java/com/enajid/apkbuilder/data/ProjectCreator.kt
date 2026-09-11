@@ -79,7 +79,7 @@ class ProjectCreator(
             files
         } else {
             files.filterNot { it.path == ".github/workflows/build.yml" } +
-                templateEngine.workflowFile()
+                templateEngine.workflowFile(spec.framework)
         }
         gitRepository.pushFiles(
             owner = owner,

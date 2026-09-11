@@ -106,9 +106,8 @@ class CreateProjectViewModel(application: Application) : AndroidViewModel(applic
     }
 
     fun setFramework(framework: Framework) {
-        // From scratch, only Kotlin can actually be created in v1.
-        // Uploading a zip works for any Gradle project, so everything is
-        // selectable there.
+        // Scratch projects need a bundled template; uploads accept anything
+        // (with a matching build workflow injected when the zip has none).
         if (_state.value.source == ProjectSource.SCRATCH && !framework.available) return
         _state.update { it.copy(framework = framework) }
     }
@@ -179,11 +178,11 @@ class CreateProjectViewModel(application: Application) : AndroidViewModel(applic
         val detectedFramework = scan.framework
         val notice = when (detectedFramework) {
             Framework.FLUTTER ->
-                "Flutter detected. Your code is pushed as-is; cloud builds for Flutter " +
-                    "arrive in the next version."
+                "Flutter detected. Your code is pushed as-is; if the zip has no build " +
+                    "workflow, APK Builder adds a Flutter one."
             Framework.REACT_NATIVE ->
-                "React Native detected. Your code is pushed as-is; cloud builds for React " +
-                    "Native arrive in the next version."
+                "React Native detected. Your code is pushed as-is; if the zip has no build " +
+                    "workflow, APK Builder adds a React Native one."
             else -> if (!scan.isGradleProject) {
                 "This doesn’t look like a standard Gradle project — the cloud build may " +
                     "not work, but your code will be safely on GitHub."

@@ -118,6 +118,54 @@ jobs:
           templates/java-app/app/src/main/res/drawable/ic_launcher.xml
           templates/java-app/app/src/main/res/values/strings.xml
           templates/java-app/app/src/main/res/values/themes.xml
+          templates/react-native-app/dot-github/workflows/build.yml
+          templates/react-native-app/dot-gitignore
+          templates/react-native-app/dot-watchmanconfig
+          templates/react-native-app/README.md
+          templates/react-native-app/package.json
+          templates/react-native-app/app.json
+          templates/react-native-app/index.js
+          templates/react-native-app/App.tsx
+          templates/react-native-app/babel.config.js
+          templates/react-native-app/metro.config.js
+          templates/react-native-app/android/settings.gradle
+          templates/react-native-app/android/build.gradle
+          templates/react-native-app/android/gradle.properties
+          templates/react-native-app/android/gradlew
+          templates/react-native-app/android/gradlew.bat
+          templates/react-native-app/android/gradle/wrapper/gradle-wrapper.jar
+          templates/react-native-app/android/gradle/wrapper/gradle-wrapper.properties
+          templates/react-native-app/android/app/build.gradle
+          templates/react-native-app/android/app/proguard-rules.pro
+          templates/react-native-app/android/app/debug.keystore
+          templates/react-native-app/android/app/src/main/AndroidManifest.xml
+          templates/react-native-app/android/app/src/main/java/MainActivity.kt
+          templates/react-native-app/android/app/src/main/java/MainApplication.kt
+          templates/react-native-app/android/app/src/main/res/drawable/ic_launcher.xml
+          templates/react-native-app/android/app/src/main/res/drawable/rn_edit_text_material.xml
+          templates/react-native-app/android/app/src/main/res/values/strings.xml
+          templates/react-native-app/android/app/src/main/res/values/styles.xml
+          templates/flutter-app/dot-github/workflows/build.yml
+          templates/flutter-app/dot-gitignore
+          templates/flutter-app/README.md
+          templates/flutter-app/pubspec.yaml
+          templates/flutter-app/analysis_options.yaml
+          templates/flutter-app/lib/main.dart
+          templates/flutter-app/android/dot-gitignore
+          templates/flutter-app/android/settings.gradle.kts
+          templates/flutter-app/android/build.gradle.kts
+          templates/flutter-app/android/gradle.properties
+          templates/flutter-app/android/gradle/wrapper/gradle-wrapper.properties
+          templates/flutter-app/android/app/build.gradle.kts
+          templates/flutter-app/android/app/src/main/AndroidManifest.xml
+          templates/flutter-app/android/app/src/debug/AndroidManifest.xml
+          templates/flutter-app/android/app/src/profile/AndroidManifest.xml
+          templates/flutter-app/android/app/src/main/kotlin/MainActivity.kt
+          templates/flutter-app/android/app/src/main/res/drawable/ic_launcher.xml
+          templates/flutter-app/android/app/src/main/res/drawable/launch_background.xml
+          templates/flutter-app/android/app/src/main/res/drawable-v21/launch_background.xml
+          templates/flutter-app/android/app/src/main/res/values/styles.xml
+          templates/flutter-app/android/app/src/main/res/values-night/styles.xml
           EOF
           if [ "$MISSING" = "0" ]; then
             echo "All 34 template assets are present in the APK ✓"

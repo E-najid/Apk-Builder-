@@ -1,0 +1,73 @@
+name: Build Android APK
+
+on:
+  push:
+    branches: [ "main", "master" ]
+    tags: [ "v*" ]
+  pull_request:
+    branches: [ "main", "master" ]
+  workflow_dispatch:
+    inputs:
+      build_type:
+        description: 'Select APK Build Type'
+        required: true
+        default: 'debug'
+        type: choice
+        options:
+          - debug
+          - release
+          - both
+
+jobs:
+  build:
+    name: Build APK
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+
+      - name: Set up Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install npm dependencies
+        run: npm install --no-audit --no-fund
+
+      - name: Build Android APK
+        run: |
+          cd android
+          BUILD_TYPE="${{ github.event.inputs.build_type || 'debug' }}"
+          echo "Building APK with target: $BUILD_TYPE"
+          if [ "$BUILD_TYPE" == "release" ]; then
+            ./gradlew assembleRelease --stacktrace
+          elif [ "$BUILD_TYPE" == "both" ]; then
+            ./gradlew assembleDebug assembleRelease --stacktrace
+          else
+            ./gradlew assembleDebug --stacktrace
+          fi
+
+      - name: Upload APK Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ github.event.repository.name }}-APK-${{ github.run_number }}
+          path: android/app/build/outputs/apk/**/*.apk
+          retention-days: 90
+
+      - name: Create GitHub Release & Attach APK (On Tag Push Only)
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            android/app/build/outputs/apk/**/*.apk
+          generate_release_notes: true
+          name: Release ${{ github.ref_name }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

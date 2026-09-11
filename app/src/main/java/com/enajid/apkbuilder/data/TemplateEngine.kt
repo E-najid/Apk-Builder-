@@ -1,6 +1,7 @@
 package com.enajid.apkbuilder.data
 
 import android.content.Context
+import com.enajid.apkbuilder.domain.Framework
 import com.enajid.apkbuilder.domain.ProjectSpec
 import java.io.IOException
 
@@ -12,12 +13,13 @@ class TemplateAssetMissingException(path: String) :
 class TemplateEngine(private val context: Context) {
 
     /** Reads template files from assets. */
-    fun workflowFile(): TemplateRenderer.RenderedFile {
+    fun workflowFile(framework: Framework = Framework.KOTLIN): TemplateRenderer.RenderedFile {
+        val root = TemplateRenderer.templateRoot(framework)
+        val asset = "$root/dot-github/workflows/build.yml"
         val bytes = try {
-            context.assets.open("${TemplateRenderer.TEMPLATE_ROOT}/dot-github/workflows/build.yml")
-                .use { it.readBytes() }
+            context.assets.open(asset).use { it.readBytes() }
         } catch (e: IOException) {
-            throw TemplateAssetMissingException("${TemplateRenderer.TEMPLATE_ROOT}/dot-github/workflows/build.yml")
+            throw TemplateAssetMissingException(asset)
         }
         return TemplateRenderer.RenderedFile(
             path = ".github/workflows/build.yml",
