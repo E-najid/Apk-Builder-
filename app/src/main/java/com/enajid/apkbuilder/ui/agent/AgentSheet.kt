@@ -459,7 +459,7 @@ private fun AgentSetupContent(
                 }
             }
         } else {
-            items(state.profiles, key = { it.id }) { profile ->
+            items(state.profiles, key = { "profile-${it.id}" }) { profile ->
                 ProfileRow(
                     profile = profile,
                     test = state.profileTests[profile.id],
@@ -489,7 +489,7 @@ private fun AgentSetupContent(
             )
         }
 
-        items(state.skills, key = { it.id }) { skill ->
+        items(state.skills, key = { "skill-${it.id}" }) { skill ->
             Row(
                 Modifier
                     .fillMaxWidth()

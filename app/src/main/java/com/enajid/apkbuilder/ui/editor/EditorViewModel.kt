@@ -670,10 +670,13 @@ class EditorViewModel(
                     skills = safeSkills(),
                 )
             }
-            if (profiles.any { it.enabled && it.role == ModelRole.CODER }) {
-                sendAgentMessage(prompt, _state.value.selectedPath, null)
-            } else {
-                _agent.update { it.copy(pendingInput = prompt) }
+            when {
+                _agent.value.busy -> _agent.update {
+                    it.copy(pendingInput = prompt, notice = "Agent ব্যস্ত ছিল — prompt ইনপুট বক্সে বসানো হলো")
+                }
+                profiles.any { p -> p.enabled && p.role == ModelRole.CODER } ->
+                    sendAgentMessage(prompt, _state.value.selectedPath, null)
+                else -> _agent.update { it.copy(pendingInput = prompt) }
             }
         }
     }

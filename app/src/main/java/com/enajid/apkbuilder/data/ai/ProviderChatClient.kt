@@ -1,6 +1,8 @@
 package com.enajid.apkbuilder.data.ai
 
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -53,7 +55,7 @@ class ProviderChatClient(
         encodeDefaults = true // keep "type":"function" etc. in tool specs
     }
 
-    override suspend fun chat(request: ChatRequest): ChatResponse {
+    override suspend fun chat(request: ChatRequest): ChatResponse = withContext(Dispatchers.IO) {
         val url = baseUrl.trimEnd('/') + "/chat/completions"
         AiDebugLog.info(
             "http",
@@ -110,12 +112,12 @@ class ProviderChatClient(
                 "← HTTP 200 in ${elapsed}ms · $summary",
                 details = message?.content?.take(400),
             )
-            return decoded
+            decoded
         }
     }
 
     /** Model ids for the picker in the setup dialog. */
-    suspend fun listModels(): List<String> {
+    suspend fun listModels(): List<String> = withContext(Dispatchers.IO) {
         val url = baseUrl.trimEnd('/') + "/models"
         AiDebugLog.info("http", "→ GET /models · key=${AiDebugLog.redact(apiKey)} · $url")
         val startedAt = System.currentTimeMillis()
@@ -152,7 +154,7 @@ class ProviderChatClient(
                 "← HTTP 200 in ${elapsed}ms · ${models.size} models",
                 details = models.take(15).joinToString("\n"),
             )
-            return models
+            models
         }
     }
 
