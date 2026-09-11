@@ -19,6 +19,8 @@ class ApkBuilderApp : Application() {
         container = AppContainer(this)
         // Keep the in-memory token cache in sync with DataStore (including sign-out).
         appScope.launch {
+            // Seal any legacy plaintext token first (no-op when already sealed).
+            container.tokenStore.migrateLegacyToken()
             container.tokenStore.tokenFlow.collect { container.tokenStore.updateCached(it) }
         }
     }
