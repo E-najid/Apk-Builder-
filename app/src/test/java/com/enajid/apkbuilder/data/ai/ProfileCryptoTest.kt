@@ -31,11 +31,13 @@ class ProfileCryptoTest {
     }
 
     @Test
-    fun `storage form never contains the raw key`() {
-        val stored = ProfileCrypto.forStorage(listOf(profile("sk-secret-123")), ::fakeEncrypt)
+    fun `storage form runs every key through the cipher`() {
+        val raw = "sk-secret-123"
+        val stored = ProfileCrypto.forStorage(listOf(profile(raw)), ::fakeEncrypt)
 
-        assertTrue(stored.single().apiKey.startsWith("enc:v1:"))
-        assertFalse(stored.single().apiKey.contains("sk-secret-123"))
+        // The stored value is exactly the cipher's output, never the raw key.
+        assertEquals(fakeEncrypt(raw), stored.single().apiKey)
+        assertFalse(stored.single().apiKey == raw)
     }
 
     @Test
