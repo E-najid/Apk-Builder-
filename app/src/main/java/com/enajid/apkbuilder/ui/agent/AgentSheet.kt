@@ -31,6 +31,7 @@ import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.Link
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Settings
+import androidx.compose.material.icons.rounded.Share
 import androidx.compose.material.icons.rounded.SmartToy
 import androidx.compose.material.icons.rounded.Stop
 import androidx.compose.material.icons.rounded.Warning
@@ -75,6 +76,7 @@ import com.enajid.apkbuilder.data.ai.ModelRole
 import com.enajid.apkbuilder.data.ai.ProviderPresets
 import com.enajid.apkbuilder.data.ai.Skill
 import com.enajid.apkbuilder.data.ai.McpServerConfig
+import com.enajid.apkbuilder.data.ai.McpHost
 import com.enajid.apkbuilder.ui.editor.EditorViewModel
 import com.enajid.apkbuilder.ui.editor.EditorViewModel.AgentBubble
 import com.enajid.apkbuilder.util.Intents
@@ -100,6 +102,7 @@ fun AgentSheet(
     var input by remember { mutableStateOf("") }
     var showSetup by remember { mutableStateOf(!state.hasCoder) }
     var showDebug by remember { mutableStateOf(false) }
+    var showConnector by remember { mutableStateOf(false) }
     var editProfile by remember { mutableStateOf<ModelProfile?>(null) }
     var addProfileDialog by remember { mutableStateOf(false) }
     var deleteProfileTarget by remember { mutableStateOf<ModelProfile?>(null) }
@@ -152,6 +155,15 @@ fun AgentSheet(
                         Text("নতুন চ্যাট", style = MaterialTheme.typography.labelSmall)
                     }
                 }
+                IconButton(onClick = { showConnector = !showConnector }) {
+                    Icon(
+                        Icons.Rounded.Share,
+                        contentDescription = "Connector",
+                        tint = if (showConnector) MaterialTheme.colorScheme.primary else {
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                        },
+                    )
+                }
                 IconButton(onClick = { showDebug = !showDebug }) {
                     Icon(
                         Icons.Rounded.BugReport,
@@ -176,6 +188,10 @@ fun AgentSheet(
             }
 
             when {
+                showConnector -> ConnectorContent(
+                    viewModel = viewModel,
+                    modifier = Modifier.weight(1f),
+                )
                 showDebug -> DebugContent(
                     state = state,
                     modifier = Modifier.weight(1f),
@@ -1253,6 +1269,131 @@ private fun DebugContent(
                             )
                         }
                     }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ConnectorContent(
+    viewModel: EditorViewModel,
+    modifier: Modifier = Modifier,
+) {
+    val connector by viewModel.connectorState.collectAsStateWithLifecycle()
+    val clipboard = LocalClipboardManager.current
+
+    Column(
+        modifier
+            .fillMaxWidth()
+            .verticalScroll(rememberScrollState())
+            .padding(vertical = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Text("ফোন-কানেক্টর (MCP সার্ভার)", style = MaterialTheme.typography.titleMedium)
+        Text(
+            "এই ফোনটাকেই MCP সার্ভার বানিয়ে Claude / ChatGPT-তে যোগ করো — " +
+                "তখন সেখান থেকে সরাসরি তোমার APK Builder প্রজেক্ট পড়তে, লিখতে আর " +
+                "বিল্ড ট্রিগার করতে পারবে (Canva-র মতো কানেক্টর)।",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+
+        when (val s = connector) {
+            is McpHost.State.Idle -> {
+                OutlinedButton(onClick = { viewModel.startConnector() }) {
+                    Icon(Icons.Rounded.PlayArrow, contentDescription = null, Modifier.size(18.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text("কানেক্টর চালু করো")
+                }
+            }
+            is McpHost.State.Starting -> {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                    Spacer(Modifier.width(10.dp))
+                    Text("tunnel খোলা হচ্ছে…")
+                }
+            }
+            is McpHost.State.Running -> {
+                Surface(
+                    shape = RoundedCornerShape(10.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant,
+                ) {
+                    Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                Icons.Rounded.CheckCircle,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.tertiary,
+                                modifier = Modifier.size(18.dp),
+                            )
+                            Spacer(Modifier.width(6.dp))
+                            Text(
+                                "চালু আছে ✓ (ফোন চালু থাকতে হবে)",
+                                style = MaterialTheme.typography.labelMedium,
+                            )
+                        }
+                        SelectionContainer {
+                            Text(
+                                s.url,
+                                style = MaterialTheme.typography.bodySmall,
+                                fontFamily = FontFamily.Monospace,
+                            )
+                        }
+                        OutlinedButton(onClick = { clipboard.setText(AnnotatedString(s.url)) }) {
+                            Icon(Icons.Rounded.ContentCopy, contentDescription = null, Modifier.size(16.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text("URL কপি করো")
+                        }
+                    }
+                }
+
+                Text("Claude-তে যোগ করো:", style = MaterialTheme.typography.labelLarge)
+                Text(
+                    "claude.com → Customize → Connectors → Add custom connector → " +
+                        "এই URL পেস্ট করো। Authentication: None।",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Text("ChatGPT-তে যোগ করো:", style = MaterialTheme.typography.labelLarge)
+                Text(
+                    "Settings → Connectors → Advanced → Create / Manage (developer mode) → " +
+                        "নতুন connector বানিয়ে এই URL দাও।",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Text(
+                    "নোট: URL-এই একটা গোপন টোকেন আছে — যার URL আছে শুধু সে-ই ঢুকতে পারবে, " +
+                        "তাই কারো সাথে শেয়ার কোরো না। ফ্রি pinggy tunnel ~৬০ মিনিট পর বন্ধ হয় — " +
+                        "তখন আবার চালু করলে নতুন URL পাবে, connector-এ URL আপডেট করতে হবে।",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.secondary,
+                )
+                OutlinedButton(onClick = { viewModel.stopConnector() }) {
+                    Icon(Icons.Rounded.Stop, contentDescription = null, Modifier.size(18.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text("বন্ধ করো")
+                }
+            }
+            is McpHost.State.Failed -> {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        Icons.Rounded.Warning,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.error,
+                        modifier = Modifier.size(18.dp),
+                    )
+                    Spacer(Modifier.width(6.dp))
+                    Text(
+                        "বন্ধ হয়ে গেছে: ${s.reason}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                }
+                OutlinedButton(onClick = { viewModel.startConnector() }) {
+                    Icon(Icons.Rounded.PlayArrow, contentDescription = null, Modifier.size(18.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text("আবার চালু করো")
                 }
             }
         }

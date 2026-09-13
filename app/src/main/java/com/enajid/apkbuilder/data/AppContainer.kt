@@ -66,6 +66,9 @@ class AppContainer(context: Context) {
     val gitRepository = GitRepository(gitHubApi)
     val actionsRepository = ActionsRepository(gitHubApi)
     val projectCreator = ProjectCreator(projectsRepository, gitRepository, templateEngine)
+
+    /** Phone-hosted MCP server (tunnel to Claude/ChatGPT) — app-process singleton. */
+    val mcpHost by lazy { com.enajid.apkbuilder.data.ai.McpHost(this) }
     val buildOrchestrator = BuildOrchestrator(
         gitRepository, actionsRepository, localProjectStore,
         keystoreManager, templateEngine,

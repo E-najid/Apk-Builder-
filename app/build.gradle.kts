@@ -90,6 +90,11 @@ dependencies {
     implementation(libs.androidx.compose.material.icons.extended)
     implementation(libs.androidx.navigation.compose)
 
+    // Phone-hosted MCP server: tiny embedded HTTP server + SSH tunnel
+    // (pinggy over port 443) so Claude/ChatGPT can connect to the phone.
+    implementation(libs.nanohttpd)
+    implementation(libs.jsch)
+
     // GitHub REST API (no backend server — the app talks to GitHub directly)
     implementation(libs.retrofit)
     implementation(libs.retrofit.kotlinx.serialization)

@@ -1300,6 +1300,14 @@ class EditorViewModel(
         }
     }
 
+    // ------------------------------------------------- phone-hosted connector --
+
+    val connectorState = container.mcpHost.state
+
+    fun startConnector() = container.mcpHost.start()
+
+    fun stopConnector() = container.mcpHost.stop()
+
     /** Connects once and lists the tools — shown in the edit dialog. */
     fun testMcpServer(config: McpServerConfig) {
         viewModelScope.launch {
