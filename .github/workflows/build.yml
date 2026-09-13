@@ -155,6 +155,9 @@ jobs:
           templates/flutter-app/android/settings.gradle.kts
           templates/flutter-app/android/build.gradle.kts
           templates/flutter-app/android/gradle.properties
+          templates/flutter-app/android/gradlew
+          templates/flutter-app/android/gradlew.bat
+          templates/flutter-app/android/gradle/wrapper/gradle-wrapper.jar
           templates/flutter-app/android/gradle/wrapper/gradle-wrapper.properties
           templates/flutter-app/android/app/build.gradle.kts
           templates/flutter-app/android/app/src/main/AndroidManifest.xml

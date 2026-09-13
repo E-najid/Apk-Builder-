@@ -31,7 +31,12 @@ class BuildOrchestrator(
     suspend fun trigger(owner: String, repo: String, branch: String): TriggerResult {
         val dirty = withContext(Dispatchers.IO) { localProjectStore.loadDirty(owner, repo) }
         val paths = gitRepository.listFiles(owner, repo, branch).map { it.path } + dirty.keys
-        val toolchains = ToolchainDetector.detect(paths)
+        val toolchains = ToolchainDetector.detect(paths) { path ->
+            // package.json content decides React Native; unreadable = not RN.
+            runCatching {
+                gitRepository.readFile(owner, repo, branch, path).toString(Charsets.UTF_8)
+            }.getOrNull()
+        }
 
         // When a signing keystore is active, its files ride along into the
         // repo (and the workflow template is refreshed) so the release job
