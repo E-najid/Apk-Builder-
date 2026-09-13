@@ -29,8 +29,8 @@ class AnthropicWireTest {
             request(
                 ChatMessage(role = "system", content = "be helpful"),
                 ChatMessage(role = "user", content = "hi"),
+                tools = listOf(spec("read_file")),
             ),
-            tools = listOf(spec("read_file")),
         )
 
         assertEquals("be helpful", body["system"]!!.jsonPrimitive.content)

@@ -32,24 +32,24 @@ class McpProtocolTest {
             """{"jsonrpc":"2.0","id":7,"result":{"tools":[]}}""",
             7,
         )
-        assertTrue(ok is McpProtocol.RpcResponse.Ok)
+        assertTrue(ok is RpcResponse.Ok)
 
         val wrongId = McpProtocol.parseResponse(
             """{"jsonrpc":"2.0","id":8,"result":{}}""",
             7,
         )
-        assertTrue(wrongId is McpProtocol.RpcResponse.NotOurs)
+        assertTrue(wrongId is RpcResponse.NotOurs)
 
         val notification = McpProtocol.parseResponse(
             """{"jsonrpc":"2.0","method":"notifications/message","params":{}}""",
             7,
         )
-        assertTrue(notification is McpProtocol.RpcResponse.NotOurs)
+        assertTrue(notification is RpcResponse.NotOurs)
 
         val err = McpProtocol.parseResponse(
             """{"jsonrpc":"2.0","id":7,"error":{"code":-32000,"message":"tool not found"}}""",
             7,
-        ) as McpProtocol.RpcResponse.Err
+        ) as RpcResponse.Err
         assertEquals("tool not found", err.message)
     }
 
@@ -64,10 +64,10 @@ class McpProtocolTest {
 
         """.trimIndent()
         val found = McpProtocol.findResponse(body, 5)
-        assertTrue(found is McpProtocol.RpcResponse.Ok)
+        assertTrue(found is RpcResponse.Ok)
 
         val none = McpProtocol.findResponse("""{"jsonrpc":"2.0","id":5,"result":null}""", 6)
-        assertTrue(none is McpProtocol.RpcResponse.Err)
+        assertTrue(none is RpcResponse.Err)
     }
 
     @Test
