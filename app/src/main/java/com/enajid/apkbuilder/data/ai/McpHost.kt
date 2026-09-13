@@ -267,26 +267,32 @@ class McpHost(private val container: AppContainer) {
             "list_projects" -> {
                 val repos = container.projectsRepository.listProjects()
                 if (repos.isEmpty()) {
-                    "no APK Builder projects yet — create one in the app first" to false
-                } else {
-                    repos.joinToString("\n") { repo ->
-                        "- ${repo.name} (branch ${repo.default_branch.ifBlank { "main" }})"
-                    } to false
+                    return "no APK Builder projects yet — create one in the app first" to false
                 }
+                val listing = repos.joinToString("\n") { repo ->
+                    "- ${repo.name} (branch ${repo.default_branch.ifBlank { "main" }})"
+                }
+                return listing to false
             }
             "list_files" -> {
                 val repo = arg("repo") ?: return "error: missing 'repo'" to true
                 val branch = branchOf(owner, repo)
                 val paths = container.gitRepository.listFiles(owner, repo, branch).map { it.path }
-                if (paths.isEmpty()) "(empty repository)" to false else paths.joinToString("\n") to false
+                if (paths.isEmpty()) {
+                    return "(empty repository)" to false
+                }
+                return paths.joinToString("\n") to false
             }
             "read_file" -> {
                 val repo = arg("repo") ?: return "error: missing 'repo'" to true
                 val path = arg("path") ?: return "error: missing 'path'" to true
                 val branch = branchOf(owner, repo)
                 val bytes = container.gitRepository.readFile(owner, repo, branch, path)
-                if (bytes.contains(0.toByte())) "(binary file)" to false
-                else String(bytes, Charsets.UTF_8).take(50_000) to false
+                if (bytes.contains(0.toByte())) {
+                    return "(binary file)" to false
+                }
+                val text = String(bytes, Charsets.UTF_8).take(50_000)
+                return text to false
             }
             "write_file" -> {
                 val repo = arg("repo") ?: return "error: missing 'repo'" to true
@@ -306,7 +312,7 @@ class McpHost(private val container: AppContainer) {
                     ),
                     message = "Write $path (via MCP connector)",
                 )
-                "ok: committed $path to $repo@${branch} (${sha.take(7)})" to false
+                return "ok: committed $path to $repo@${branch} (${sha.take(7)})" to false
             }
             "trigger_build" -> {
                 val repo = arg("repo") ?: return "error: missing 'repo'" to true
@@ -314,16 +320,16 @@ class McpHost(private val container: AppContainer) {
                 val sha = container.gitRepository.createEmptyCommit(
                     owner, repo, branch, "Trigger build (via MCP connector)",
                 )
-                "ok: build triggered for $repo — commit ${sha.take(7)}. " +
+                return "ok: build triggered for $repo — commit ${sha.take(7)}. " +
                     "Check get_build_status in a minute." to false
             }
             "get_build_status" -> {
                 val repo = arg("repo") ?: return "error: missing 'repo'" to true
                 val summary = container.gitRepository.latestBuildSummary(owner, repo)
                     ?: return "no workflow runs yet for $repo" to false
-                summary to false
+                return summary to false
             }
-            else -> "error: unknown tool '$name'" to true
+            else -> return "error: unknown tool '$name'" to true
         }
     }
 
