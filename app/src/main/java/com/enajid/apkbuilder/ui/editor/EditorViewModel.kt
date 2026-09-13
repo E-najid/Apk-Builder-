@@ -12,6 +12,7 @@ import com.enajid.apkbuilder.data.ProjectsRepository
 import com.enajid.apkbuilder.data.TemplateRenderer
 import com.enajid.apkbuilder.data.ai.AgentEvent
 import com.enajid.apkbuilder.data.ai.AgentProjectAccess
+import com.enajid.apkbuilder.data.ai.ChatApi
 import com.enajid.apkbuilder.data.ai.AnthropicChatClient
 import com.enajid.apkbuilder.data.ai.AppConfigSnapshot
 import com.enajid.apkbuilder.data.ai.McpClient
