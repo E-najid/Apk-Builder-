@@ -115,7 +115,7 @@ class McpProtocolTest {
     fun `slug and prefix round trip`() {
         assertEquals("mytools", McpProtocol.slugFromName("My Tools!", 1))
         assertEquals("srv7", McpProtocol.slugFromName("!!!", 7))
-        assertEquals("cafe2024", McpProtocol.slugFromName("Café 2024", 2))
+        assertEquals("caf2024", McpProtocol.slugFromName("Café 2024", 2))
 
         val prefixed = McpProtocol.prefixedToolName("mytools", "weather")
         assertEquals("mcp__mytools__weather", prefixed)

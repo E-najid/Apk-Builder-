@@ -201,8 +201,8 @@ object AnthropicWire {
             val obj = runCatching { Json.parseToJsonElement(payload).jsonObject }.getOrNull() ?: return
             when (obj["type"]?.jsonPrimitive?.contentOrNull) {
                 "message_start" ->
-                    inputTokens = (obj["message"] as? JsonObject)
-                        ?.get("usage")?.jsonPrimitive?.longOrNull
+                    inputTokens = ((obj["message"] as? JsonObject)?.get("usage") as? JsonObject)
+                        ?.get("input_tokens")?.jsonPrimitive?.longOrNull
                 "content_block_start" -> {
                     val index = obj["index"]?.jsonPrimitive?.longOrNull?.toInt() ?: return
                     val block = obj["content_block"] as? JsonObject ?: return

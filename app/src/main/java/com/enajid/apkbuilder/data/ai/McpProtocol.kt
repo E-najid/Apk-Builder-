@@ -118,9 +118,15 @@ object McpProtocol {
      * SSE stream with several messages.
      */
     fun findResponse(body: String, id: Long): RpcResponse {
-        parseResponse(body, id).let { if (it !is RpcResponse.NotOurs) return it }
+        // The body may be a single JSON object or an SSE stream — a failed
+        // direct parse just means "try the data: lines", not "error".
+        runCatching { Json.parseToJsonElement(body).jsonObject }.getOrNull()?.let { obj ->
+            respond(obj, id).let { if (it !is RpcResponse.NotOurs) return it }
+        }
         for (payload in extractSsePayloads(body)) {
-            parseResponse(payload, id).let { if (it !is RpcResponse.NotOurs) return it }
+            runCatching { Json.parseToJsonElement(payload).jsonObject }.getOrNull()?.let { obj ->
+                respond(obj, id).let { if (it !is RpcResponse.NotOurs) return it }
+            }
         }
         return RpcResponse.Err("server উত্তর দিলো না (no response for request $id)")
     }

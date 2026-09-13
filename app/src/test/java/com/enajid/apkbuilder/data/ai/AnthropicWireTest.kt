@@ -70,7 +70,7 @@ class AnthropicWireTest {
         )
 
         val messages = body["messages"]!!.jsonArray
-        assertEquals(3, messages.size) // user, assistant(tool_use), user(tool_result), assistant
+        assertEquals(4, messages.size) // user, assistant(tool_use), user(tool_result), assistant
         val assistant = messages[1].jsonObject
         assertEquals("assistant", assistant["role"]!!.jsonPrimitive.content)
         val block = assistant["content"]!!.jsonArray[0].jsonObject
