@@ -44,6 +44,13 @@ object ProviderPresets {
         keyUrl = "https://cloud.cerebras.ai/",
         freeHint = "ফ্রি tier, দ্রুত",
     )
+    val ANTHROPIC = ProviderPreset(
+        id = "anthropic",
+        label = "Claude (Anthropic)",
+        baseUrl = "https://api.anthropic.com/v1",
+        keyUrl = "https://console.anthropic.com/settings/keys",
+    )
+
     val CUSTOM = ProviderPreset(
         id = "custom",
         label = "Custom",
@@ -52,7 +59,7 @@ object ProviderPresets {
         freeHint = "যেকোনো OpenAI-compatible URL",
     )
 
-    val all = listOf(OPENROUTER, GROQ, GEMINI, CEREBRAS, CUSTOM)
+    val all = listOf(OPENROUTER, GROQ, GEMINI, CEREBRAS, ANTHROPIC, CUSTOM)
 
     fun byId(id: String): ProviderPreset = all.firstOrNull { it.id == id } ?: CUSTOM
 }

@@ -23,6 +23,16 @@ data class Skill(
     val enabled: Boolean = true,
 )
 
+/** An external MCP server the user connected (token sealed at rest). */
+@Serializable
+data class McpServerConfig(
+    val id: Long,
+    val name: String,
+    val url: String,
+    val token: String = "",
+    val enabled: Boolean = true,
+)
+
 /**
  * Stores the user's AI model profiles and skills as JSON in app-private
  * DataStore — no database, nothing ever leaves the device except calls to
@@ -47,6 +57,11 @@ class AiProfilesStore(private val context: Context) {
         decode(prefs[KEY_SKILLS], Skill.serializer()) { builtInSkills() }.ifEmpty { builtInSkills() }
     }
 
+    val mcpServersFlow: Flow<List<McpServerConfig>> = context.aiDataStore.data.map { prefs ->
+        decode(prefs[KEY_MCP], McpServerConfig.serializer()) { emptyList() }
+            .map { it.copy(token = SecretCipher.decrypt(it.token)) }
+    }
+
     suspend fun profiles(): List<ModelProfile> {
         val stored = context.aiDataStore.data.first()[KEY_PROFILES]
         val list = decode(stored, ModelProfile.serializer()) { seedProfiles() }
@@ -59,6 +74,32 @@ class AiProfilesStore(private val context: Context) {
     }
 
     suspend fun skills(): List<Skill> = skillsFlow.first()
+
+    suspend fun mcpServers(): List<McpServerConfig> = mcpServersFlow.first()
+
+    suspend fun addMcpServer(name: String, url: String, token: String): McpServerConfig {
+        val current = mcpServers()
+        val config = McpServerConfig(
+            id = (current.maxOfOrNull { it.id } ?: 0L) + 1L,
+            name = name.trim(),
+            url = url.trim(),
+            token = token.trim(),
+        )
+        saveMcpServers(current + config)
+        return config
+    }
+
+    suspend fun updateMcpServer(config: McpServerConfig) {
+        saveMcpServers(mcpServers().map { if (it.id == config.id) config else it })
+    }
+
+    suspend fun deleteMcpServer(id: Long) {
+        saveMcpServers(mcpServers().filterNot { it.id == id })
+    }
+
+    suspend fun setMcpServerEnabled(id: Long, enabled: Boolean) {
+        saveMcpServers(mcpServers().map { if (it.id == id) it.copy(enabled = enabled) else it })
+    }
 
     suspend fun addProfile(
         providerId: String,
@@ -143,6 +184,15 @@ class AiProfilesStore(private val context: Context) {
         }
     }
 
+    private suspend fun saveMcpServers(list: List<McpServerConfig>) {
+        val sealed = list.map {
+            if (it.token.isBlank()) it else it.copy(token = SecretCipher.encrypt(it.token))
+        }
+        context.aiDataStore.edit { prefs ->
+            prefs[KEY_MCP] = json.encodeToString(ListSerializer(McpServerConfig.serializer()), sealed)
+        }
+    }
+
     private fun <T> decode(
         raw: String?,
         serializer: kotlinx.serialization.KSerializer<T>,
@@ -156,6 +206,7 @@ class AiProfilesStore(private val context: Context) {
     companion object {
         private val KEY_PROFILES = stringPreferencesKey("model_profiles_json")
         private val KEY_SKILLS = stringPreferencesKey("skills_json")
+        private val KEY_MCP = stringPreferencesKey("mcp_servers_json")
 
         /** First profile starts as the coder — one model is enough to begin. */
         private fun seedProfiles(): List<ModelProfile> = emptyList()

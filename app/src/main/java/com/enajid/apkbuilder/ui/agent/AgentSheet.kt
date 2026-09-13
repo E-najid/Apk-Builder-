@@ -28,6 +28,7 @@ import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.ContentCopy
 import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material.icons.rounded.Edit
+import androidx.compose.material.icons.rounded.Link
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material.icons.rounded.SmartToy
@@ -73,6 +74,7 @@ import com.enajid.apkbuilder.data.ai.ModelProfile
 import com.enajid.apkbuilder.data.ai.ModelRole
 import com.enajid.apkbuilder.data.ai.ProviderPresets
 import com.enajid.apkbuilder.data.ai.Skill
+import com.enajid.apkbuilder.data.ai.McpServerConfig
 import com.enajid.apkbuilder.ui.editor.EditorViewModel
 import com.enajid.apkbuilder.ui.editor.EditorViewModel.AgentBubble
 import com.enajid.apkbuilder.util.Intents
@@ -103,6 +105,8 @@ fun AgentSheet(
     var deleteProfileTarget by remember { mutableStateOf<ModelProfile?>(null) }
     var skillDialog by remember { mutableStateOf(false) }
     var deleteSkillTarget by remember { mutableStateOf<Skill?>(null) }
+    var addMcpDialog by remember { mutableStateOf(false) }
+    var editMcpServer by remember { mutableStateOf<McpServerConfig?>(null) }
 
     LaunchedEffect(state.pendingInput) {
         state.pendingInput?.let {
@@ -190,6 +194,11 @@ fun AgentSheet(
                     onAddSkill = { skillDialog = true },
                     onToggleSkill = { viewModel.toggleSkill(it) },
                     onDeleteSkill = { deleteSkillTarget = it },
+                    onAddMcpServer = { addMcpDialog = true },
+                    onEditMcpServer = { editMcpServer = it },
+                    onDeleteMcpServer = { viewModel.deleteMcpServer(it.id) },
+                    onToggleMcpServer = { id, enabled -> viewModel.toggleMcpServer(id, enabled) },
+                    onTestMcpServer = { viewModel.testMcpServer(it) },
                 )
                 else -> {
                 // ---- messages ----
@@ -219,6 +228,37 @@ fun AgentSheet(
                                     style = MaterialTheme.typography.labelSmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
+                            }
+                        }
+                    }
+                }
+
+                state.pendingMcp?.let { pending ->
+                    Surface(
+                        color = MaterialTheme.colorScheme.secondaryContainer,
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Column(Modifier.padding(12.dp)) {
+                            Text(
+                                "🔑 MCP tool চালাতে চায়: ${pending.serverSlug}/${pending.tool}",
+                                style = MaterialTheme.typography.titleSmall,
+                            )
+                            Text(
+                                pending.args,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 4,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                            Row {
+                                FilledTonalButton(onClick = { viewModel.respondMcpCall(true) }) {
+                                    Text("অনুমতি দাও")
+                                }
+                                Spacer(Modifier.width(8.dp))
+                                OutlinedButton(onClick = { viewModel.respondMcpCall(false) }) {
+                                    Text("না")
+                                }
                             }
                         }
                     }
@@ -290,7 +330,35 @@ fun AgentSheet(
                 editProfile = null
                 viewModel.clearLoadedModels()
             },
-            onLoadModels = { baseUrl, apiKey -> viewModel.loadModels(baseUrl, apiKey) },
+            onLoadModels = { baseUrl, apiKey, providerId -> viewModel.loadModels(baseUrl, apiKey, providerId) },
+        )
+    }
+
+    if (addMcpDialog || editMcpServer != null) {
+        McpServerDialog(
+            state = state,
+            initial = editMcpServer,
+            onDismiss = {
+                addMcpDialog = false
+                editMcpServer = null
+            },
+            onSave = { name, url, token ->
+                val editing = editMcpServer
+                if (editing == null) {
+                    viewModel.addMcpServer(name, url, token)
+                } else {
+                    viewModel.updateMcpServer(
+                        editing.copy(
+                            name = name,
+                            url = url,
+                            token = token.ifBlank { editing.token },
+                        ),
+                    )
+                }
+                addMcpDialog = false
+                editMcpServer = null
+            },
+            onTest = { config -> viewModel.testMcpServer(config) },
         )
     }
 
@@ -422,6 +490,11 @@ private fun AgentSetupContent(
     onAddSkill: () -> Unit,
     onToggleSkill: (Long) -> Unit,
     onDeleteSkill: (Skill) -> Unit,
+    onAddMcpServer: () -> Unit,
+    onEditMcpServer: (McpServerConfig) -> Unit,
+    onDeleteMcpServer: (McpServerConfig) -> Unit,
+    onToggleMcpServer: (Long, Boolean) -> Unit,
+    onTestMcpServer: (McpServerConfig) -> Unit,
 ) {
     LazyColumn(
         modifier
@@ -536,8 +609,184 @@ private fun AgentSetupContent(
                 Text("নিজের skill লিখো")
             }
         }
+
+        item {
+            Text("MCP Servers", style = MaterialTheme.typography.titleSmall)
+            Text(
+                "MCP server URL যোগ করলে agent সেই server-এর সব tool পায় " +
+                    "(mcp__… নামে)। প্রতিটা নতুন tool প্রথমবার চালানোর আগে তোমার অনুমতি চাইবে।",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+
+        if (state.mcpServers.isEmpty()) {
+            item {
+                Text(
+                    "কোনো MCP server নেই — যেমন https://example.com/mcp",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        } else {
+            items(state.mcpServers, key = { "mcp-${it.id}" }) { server ->
+                McpServerRow(
+                    server = server,
+                    test = state.mcpTests[server.id],
+                    onEdit = { onEditMcpServer(server) },
+                    onDelete = { onDeleteMcpServer(server) },
+                    onToggle = { onToggleMcpServer(server.id, it) },
+                )
+            }
+        }
+
+        item {
+            OutlinedButton(onClick = onAddMcpServer) {
+                Icon(Icons.Rounded.Add, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.width(6.dp))
+                Text("MCP server যোগ করো")
+            }
+        }
     }
 }
+
+@Composable
+private fun McpServerRow(
+    server: McpServerConfig,
+    test: String?,
+    onEdit: () -> Unit,
+    onDelete: () -> Unit,
+    onToggle: (Boolean) -> Unit,
+) {
+    Surface(
+        color = MaterialTheme.colorScheme.surfaceVariant,
+        shape = RoundedCornerShape(12.dp),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Row(
+            Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(
+                Icons.Rounded.Link,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(18.dp),
+            )
+            Spacer(Modifier.width(8.dp))
+            Column(Modifier.weight(1f)) {
+                Text(server.name, style = MaterialTheme.typography.bodyMedium)
+                Text(
+                    server.url,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                test?.let {
+                    Text(
+                        it,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.tertiary,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
+            IconButton(onClick = onEdit, modifier = Modifier.size(32.dp)) {
+                Icon(
+                    Icons.Rounded.Edit,
+                    contentDescription = "Edit MCP server",
+                    modifier = Modifier.size(16.dp),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            IconButton(onClick = onDelete, modifier = Modifier.size(32.dp)) {
+                Icon(
+                    Icons.Rounded.Delete,
+                    contentDescription = "Delete MCP server",
+                    modifier = Modifier.size(16.dp),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Switch(checked = server.enabled, onCheckedChange = onToggle)
+        }
+    }
+}
+
+@Composable
+private fun McpServerDialog(
+    state: EditorViewModel.AgentUiState,
+    initial: McpServerConfig?,
+    onDismiss: () -> Unit,
+    onSave: (name: String, url: String, token: String) -> Unit,
+    onTest: (McpServerConfig) -> Unit,
+) {
+    var name by remember { mutableStateOf(initial?.name ?: "") }
+    var url by remember { mutableStateOf(initial?.url ?: "") }
+    var token by remember { mutableStateOf(initial?.token ?: "") }
+    val testId = initial?.id ?: -1L
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(if (initial == null) "নতুন MCP server" else "MCP server edit") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedTextField(
+                    value = name,
+                    onValueChange = { name = it },
+                    label = { Text("নাম (যেমন: My Tools)") },
+                    singleLine = true,
+                )
+                OutlinedTextField(
+                    value = url,
+                    onValueChange = { url = it },
+                    label = { Text("Server URL (https://…/mcp)") },
+                    singleLine = true,
+                )
+                OutlinedTextField(
+                    value = token,
+                    onValueChange = { token = it },
+                    label = { Text("Auth token (optional)") },
+                    singleLine = true,
+                )
+                Text(
+                    "টোকেন এনক্রিপ্ট করে রাখা হয়। Server-এর সব tool চালু হলে agent সেগুলো ব্যবহার করতে পারবে।",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                state.mcpTests[testId]?.let {
+                    Text(
+                        it,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.tertiary,
+                    )
+                }
+                OutlinedButton(
+                    onClick = {
+                        onTest(
+                            McpServerConfig(
+                                id = testId,
+                                name = name.ifBlank { "test" },
+                                url = url,
+                                token = token,
+                            )
+                        )
+                    },
+                    enabled = url.isNotBlank(),
+                ) { Text("সংযোগ টেস্ট করো") }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = { onSave(name.trim(), url.trim(), token.trim()) },
+                enabled = name.isNotBlank() && url.isNotBlank(),
+            ) { Text("সেভ") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("না") } },
+    )
+}
+
 
 @Composable
 private fun ProfileRow(
@@ -659,7 +908,7 @@ private fun ProfileDialog(
     initial: ModelProfile?,
     onDismiss: () -> Unit,
     onSave: (providerId: String, baseUrl: String, apiKey: String, model: String, role: ModelRole) -> Unit,
-    onLoadModels: (baseUrl: String, apiKey: String) -> Unit,
+    onLoadModels: (baseUrl: String, apiKey: String, providerId: String) -> Unit,
 ) {
     val context = LocalContext.current
     val clipboard = LocalClipboardManager.current
@@ -760,7 +1009,7 @@ private fun ProfileDialog(
                 )
 
                 OutlinedButton(
-                    onClick = { onLoadModels(baseUrl, apiKey) },
+                    onClick = { onLoadModels(baseUrl, apiKey, providerId) },
                     enabled = baseUrl.isNotBlank() && apiKey.isNotBlank() && !state.modelsLoading,
                     modifier = Modifier.fillMaxWidth(),
                 ) {

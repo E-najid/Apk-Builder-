@@ -76,6 +76,7 @@ data class AgentResult(val finalText: String?, val steps: Int)
 class AiAgent(
     private val api: ChatApi,
     private val project: AgentProjectAccess,
+    private val mcpTools: McpToolProvider? = null,
     private val maxSteps: Int = MAX_STEPS,
 ) {
 
@@ -203,7 +204,7 @@ class AiAgent(
                 },
             ),
         ),
-    )
+    ) + (mcpTools?.tools() ?: emptyList())
 
     /**
      * @param history prior user/assistant text turns (kept across messages)
@@ -313,11 +314,18 @@ class AiAgent(
             "set_app_config" -> "app config"
             "get_build_status" -> "check build"
             "git_log" -> "git log"
-            else -> call.function.name
+            else -> if (call.function.name.startsWith("mcp__")) {
+                "mcp ${call.function.name.removePrefix("mcp__").replace("__", "/")}"
+            } else {
+                call.function.name
+            }
         }
     }
 
     private suspend fun executeTool(name: String, argumentsJson: String): String {
+        if (name.startsWith("mcp__")) {
+            return mcpTools?.call(name, argumentsJson) ?: "error: no MCP server connected"
+        }
         val args = try {
             Json.parseToJsonElement(argumentsJson).jsonObject
         } catch (e: Exception) {

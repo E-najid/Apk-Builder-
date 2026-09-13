@@ -12,7 +12,12 @@ import com.enajid.apkbuilder.data.ProjectsRepository
 import com.enajid.apkbuilder.data.TemplateRenderer
 import com.enajid.apkbuilder.data.ai.AgentEvent
 import com.enajid.apkbuilder.data.ai.AgentProjectAccess
+import com.enajid.apkbuilder.data.ai.AnthropicChatClient
 import com.enajid.apkbuilder.data.ai.AppConfigSnapshot
+import com.enajid.apkbuilder.data.ai.McpClient
+import com.enajid.apkbuilder.data.ai.McpManager
+import com.enajid.apkbuilder.data.ai.McpServerConfig
+import com.enajid.apkbuilder.data.ai.ProviderPresets
 import com.enajid.apkbuilder.data.ai.AiDebugLog
 import com.enajid.apkbuilder.data.ai.AiProfilesStore
 import com.enajid.apkbuilder.data.ai.ChatMessage
@@ -27,12 +32,14 @@ import com.enajid.apkbuilder.data.friendlyMessage
 import com.enajid.apkbuilder.domain.Framework
 import com.enajid.apkbuilder.domain.ProjectFiles
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -100,7 +107,22 @@ class EditorViewModel(
         val testRunning: Boolean = false,
         /** Bubble currently receiving streamed text, if any. */
         val streamingBubbleId: Long? = null,
+        /** Connected MCP servers (settings UI). */
+        val mcpServers: List<McpServerConfig> = emptyList(),
+        /** MCP server connection-test results, by server id. */
+        val mcpTests: Map<Long, String> = emptyMap(),
+        /** An MCP tool call waiting for the user's yes/no. */
+        val pendingMcp: PendingMcpCall? = null,
     ) {
+
+        /** An MCP tool call the user must approve before it runs. */
+        data class PendingMcpCall(
+            val id: Long,
+            val serverSlug: String,
+            val tool: String,
+            val args: String,
+        )
+
         val hasCoder: Boolean get() = profiles.any { it.enabled && it.role == ModelRole.CODER }
     }
 
@@ -148,7 +170,13 @@ class EditorViewModel(
         }
         if (cachedChainSig != sig || cachedChain == null) {
             cachedChain = FallbackChatApi(
-                clients = chain.map { ProviderChatClient(it) },
+                clients = chain.map { profile ->
+                    if (profile.providerId == ProviderPresets.ANTHROPIC.id) {
+                        AnthropicChatClient(profile)
+                    } else {
+                        ProviderChatClient(profile)
+                    }
+                },
                 labels = chain.map { it.summary },
                 onSwitch = { reason -> onProviderSwitch(reason) },
             )
@@ -171,8 +199,21 @@ class EditorViewModel(
         }
     }
 
+    /** MCP servers the agent may use (tools merged into every task). */
+    private val mcpManager = McpManager()
+
+    /** Answer channel for the MCP confirmation card, while it is shown. */
+    private var mcpConfirmDeferred: CompletableDeferred<Boolean>? = null
+
     init {
         load()
+        viewModelScope.launch {
+            aiStore.mcpServersFlow.collect { list ->
+                mcpManager.updateConfigs(list)
+                _agent.update { it.copy(mcpServers = list) }
+            }
+        }
+        mcpManager.confirmHook = { slug, tool, args -> confirmMcpCall(slug, tool, args) }
     }
 
     // ------------------------------------------------------------ project --
@@ -850,11 +891,15 @@ class EditorViewModel(
     }
 
     /** Loads the provider's model list for the add/edit dialog. */
-    fun loadModels(baseUrl: String, apiKey: String) {
+    fun loadModels(baseUrl: String, apiKey: String, providerId: String = "") {
         viewModelScope.launch {
             try {
                 _agent.update { it.copy(modelsLoading = true) }
-                val models = ProviderChatClient(baseUrl, apiKey).listModels()
+                val models = if (providerId == ProviderPresets.ANTHROPIC.id) {
+                    AnthropicChatClient(baseUrl, apiKey).listModels()
+                } else {
+                    ProviderChatClient(baseUrl, apiKey).listModels()
+                }
                 _agent.update {
                     it.copy(
                         modelsLoading = false,
@@ -878,7 +923,11 @@ class EditorViewModel(
     private suspend fun testProfile(profile: ModelProfile) {
         _agent.update { it.copy(testingProfileId = profile.id, profileTests = it.profileTests - profile.id) }
         val result = try {
-            val models = ProviderChatClient(profile.baseUrl, profile.apiKey).listModels()
+            val models = if (profile.providerId == ProviderPresets.ANTHROPIC.id) {
+                AnthropicChatClient(profile).listModels()
+            } else {
+                ProviderChatClient(profile.baseUrl, profile.apiKey).listModels()
+            }
             when {
                 models.isEmpty() -> ProfileTest(ok = true, message = "সংযোগ ঠিক, কিন্তু model list খালি")
                 models.contains(profile.model) ->
@@ -964,7 +1013,11 @@ class EditorViewModel(
             _agent.update { it.copy(testRunning = true) }
             AiDebugLog.info("test", "টেস্ট শুরু: ${coder.summary}")
             try {
-                val client = ProviderChatClient(coder)
+                val client = if (coder.providerId == ProviderPresets.ANTHROPIC.id) {
+                    AnthropicChatClient(coder)
+                } else {
+                    ProviderChatClient(coder)
+                }
                 val models = client.listModels()
                 val response = client.chat(
                     ChatRequest(
@@ -1074,10 +1127,23 @@ class EditorViewModel(
                 val chat = chatApiFor(chain)
                 val agent = MultiModelAgent(
                     chat = chat,
-                    reviewer = reviewer?.let { ProviderChatClient(it) },
+                    reviewer = reviewer?.let {
+                        if (it.providerId == ProviderPresets.ANTHROPIC.id) {
+                            AnthropicChatClient(it)
+                        } else {
+                            ProviderChatClient(it)
+                        }
+                    },
                     reviewerModel = reviewer?.model,
                 )
-                val system = buildSystemPrompt(selectedPath, selectedCode)
+                mcpManager.beginRun()
+                val (mcpToolCount, mcpNotices) = mcpManager.prepare()
+                mcpNotices.forEach { notice ->
+                    _agent.update { s ->
+                        s.copy(messages = s.messages + bubble(false, notice, AgentBubble.Kind.TOOL))
+                    }
+                }
+                val system = buildSystemPrompt(selectedPath, selectedCode, mcpToolCount)
                 var streamedAny = false
                 val result = agent.run(
                     model = coder.model,
@@ -1085,6 +1151,7 @@ class EditorViewModel(
                     history = agentHistory.toList(),
                     userMessage = text,
                     project = projectAccess,
+                    mcpTools = if (mcpToolCount > 0) mcpManager else null,
                 ) { event ->
                     when (event) {
                         is AgentEvent.TextDelta -> {
@@ -1155,7 +1222,105 @@ class EditorViewModel(
         }
     }
 
-    private suspend fun buildSystemPrompt(selectedPath: String?, selectedCode: String?): String {
+
+    // -------------------------------------------------------- mcp servers --
+
+    /** Shows the confirmation card and waits for the user's decision. */
+    private suspend fun confirmMcpCall(serverSlug: String, tool: String, args: String): Boolean {
+        val deferred = CompletableDeferred<Boolean>()
+        mcpConfirmDeferred = deferred
+        _agent.update {
+            it.copy(
+                pendingMcp = AgentUiState.PendingMcpCall(
+                    id = ++bubbleId,
+                    serverSlug = serverSlug,
+                    tool = tool,
+                    args = args.take(400),
+                ),
+            )
+        }
+        val decision = withTimeoutOrNull(120_000) { deferred.await() } ?: false
+        mcpConfirmDeferred = null
+        _agent.update { it.copy(pendingMcp = null) }
+        return decision
+    }
+
+    /** Answer to the MCP confirmation card ("অনুমতি দাও" / "না"). */
+    fun respondMcpCall(allow: Boolean) {
+        mcpConfirmDeferred?.complete(allow)
+    }
+
+    fun addMcpServer(name: String, url: String, token: String) {
+        viewModelScope.launch {
+            try {
+                if (name.isBlank() || url.isBlank()) {
+                    _agent.update { it.copy(notice = "নাম আর URL দুটোই দরকার") }
+                    return@launch
+                }
+                aiStore.addMcpServer(name, url, token)
+                _agent.update { it.copy(notice = "MCP server যোগ হয়েছে ✓") }
+            } catch (t: Throwable) {
+                AiDebugLog.error("mcp", "server যোগ করা যায়নি", t)
+                _agent.update { it.copy(notice = t.friendlyMessage()) }
+            }
+        }
+    }
+
+    fun updateMcpServer(config: McpServerConfig) {
+        viewModelScope.launch {
+            try {
+                aiStore.updateMcpServer(config)
+                _agent.update { it.copy(mcpTests = it.mcpTests - config.id, notice = "MCP server বদলেছে ✓") }
+            } catch (t: Throwable) {
+                _agent.update { it.copy(notice = t.friendlyMessage()) }
+            }
+        }
+    }
+
+    fun deleteMcpServer(id: Long) {
+        viewModelScope.launch {
+            try {
+                aiStore.deleteMcpServer(id)
+                _agent.update { it.copy(mcpTests = it.mcpTests - id) }
+            } catch (t: Throwable) {
+                _agent.update { it.copy(notice = t.friendlyMessage()) }
+            }
+        }
+    }
+
+    fun toggleMcpServer(id: Long, enabled: Boolean) {
+        viewModelScope.launch {
+            runCatching { aiStore.setMcpServerEnabled(id, enabled) }
+        }
+    }
+
+    /** Connects once and lists the tools — shown in the edit dialog. */
+    fun testMcpServer(config: McpServerConfig) {
+        viewModelScope.launch {
+            _agent.update { it.copy(mcpTests = it.mcpTests + (config.id to "…চলছে")) }
+            val result = try {
+                val client = McpClient(config.url, config.token)
+                client.initialize()
+                val tools = client.listTools()
+                if (tools.isEmpty()) {
+                    "সংযোগ ঠিক ✓ — কিন্তু কোনো tool নেই"
+                } else {
+                    "✓ ${tools.size} tool: " + tools.joinToString(", ") { it.name }.take(160)
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                "✗ ${e.message}"
+            }
+            _agent.update { it.copy(mcpTests = it.mcpTests + (config.id to result)) }
+        }
+    }
+
+    private suspend fun buildSystemPrompt(
+        selectedPath: String?,
+        selectedCode: String?,
+        mcpToolCount: Int = 0,
+    ): String {
         val paths = projectAccess.listPaths()
         val gradle = gradleInfo ?: runCatching {
             val file = projectAccess.readFile("app/build.gradle.kts")
@@ -1206,6 +1371,9 @@ class EditorViewModel(
             appendLine("- search_files finds usages across the whole project — far cheaper than reading files one by one.")
             appendLine("- delete_file and set_app_config also apply as drafts, only when the user saves.")
             appendLine("- get_build_status shows the latest cloud build (and failing steps); git_log shows recent commits.")
+            if (mcpToolCount > 0) {
+                appendLine("- $mcpToolCount extra tools (names starting with mcp__) come from MCP servers the user connected — use them when they help.")
+            }
             appendLine("- Only plain-text files. New Kotlin files go under app/src/main/java/ with a matching package declaration.")
             appendLine("- Available libraries: androidx.core, androidx.activity.compose, Compose UI + Material3 (compose BOM). No third-party libraries; standard Android/Compose APIs only.")
             appendLine("- When done, stop calling tools and reply with a short summary of what you changed.")

@@ -102,6 +102,7 @@ class MultiModelAgent(
     private val chat: ChatApi,
     private val reviewer: ChatApi? = null,
     private val reviewerModel: String? = null,
+    private val mcpTools: McpToolProvider? = null,
 ) {
 
     suspend fun run(
@@ -113,7 +114,7 @@ class MultiModelAgent(
         onEvent: (AgentEvent) -> Unit,
     ): AgentResult {
         val access = RecordingAccess(project)
-        val agent = AiAgent(chat, access)
+        val agent = AiAgent(chat, access, mcpTools = mcpTools)
         var result = agent.run(model, systemPrompt, history, userMessage, onEvent)
 
         val reviewText = runReview(userMessage, result, access)
