@@ -75,9 +75,9 @@ class McpClient(private val endpoint: String, private val token: String) {
             val session = it.header("Mcp-Session-Id")
             if (session != null) sessionId = session
             return when (val parsed = McpProtocol.findResponse(text, id)) {
-                is McpProtocol.RpcResponse.Ok -> parsed.result
-                is McpProtocol.RpcResponse.Err -> throw AiException("MCP: ${parsed.message}")
-                McpProtocol.RpcResponse.NotOurs -> throw AiException("MCP server উত্তর দিলো না")
+                is RpcResponse.Ok -> parsed.result
+                is RpcResponse.Err -> throw AiException("MCP: ${parsed.message}")
+                RpcResponse.NotOurs -> throw AiException("MCP server উত্তর দিলো না")
             }
         }
     }

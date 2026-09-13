@@ -204,7 +204,7 @@ class AiAgent(
                 },
             ),
         ),
-    ) + (mcpTools?.tools() ?: emptyList())
+    )
 
     /**
      * @param history prior user/assistant text turns (kept across messages)
@@ -221,12 +221,15 @@ class AiAgent(
         messages += ChatMessage(role = "system", content = systemPrompt)
         messages += history
         messages += ChatMessage(role = "user", content = userMessage)
+        // MCP tools are resolved once per run — their list is cached by the
+        // manager, but the model must see one stable set for the whole task.
+        val allTools = tools() + (mcpTools?.tools() ?: emptyList())
 
         var step = 0
         while (step < maxSteps) {
             var streamedThisCall = false
             val response = api.chatStream(
-                ChatRequest(model = model, messages = messages.toList(), tools = tools())
+                ChatRequest(model = model, messages = messages.toList(), tools = allTools)
             ) { delta ->
                 streamedThisCall = true
                 onEvent(AgentEvent.TextDelta(delta))

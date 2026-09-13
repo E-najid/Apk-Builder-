@@ -1013,12 +1013,17 @@ class EditorViewModel(
             _agent.update { it.copy(testRunning = true) }
             AiDebugLog.info("test", "টেস্ট শুরু: ${coder.summary}")
             try {
-                val client = if (coder.providerId == ProviderPresets.ANTHROPIC.id) {
+                val anthropic = coder.providerId == ProviderPresets.ANTHROPIC.id
+                val models = if (anthropic) {
+                    AnthropicChatClient(coder).listModels()
+                } else {
+                    ProviderChatClient(coder).listModels()
+                }
+                val client: ChatApi = if (anthropic) {
                     AnthropicChatClient(coder)
                 } else {
                     ProviderChatClient(coder)
                 }
-                val models = client.listModels()
                 val response = client.chat(
                     ChatRequest(
                         model = coder.model,
